@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Westminster Standards Platform</title>
+  <!--
+    Westminster Standards Platform – Phase 1 static demo
+    Hosted on GitHub Pages. AI rigor analysis goes through the Cloudflare Worker
+    "standards-proxy" (see WORKER_URL below). Sample data only; nothing is saved.
+  -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.26.4/babel.min.js"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    #loading { padding: 3rem; text-align: center; color: #6b7280; }
+  </style>
+</head>
+<body class="bg-gray-50">
+  <div id="root"><div id="loading">Loading the Westminster Standards Platform…</div></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useMemo } = React;
+
+/* =====================================================================
+   CONFIGURATION
+   Paste your Worker's address here after you deploy it.
+   ===================================================================== */
+const WORKER_URL = "https://standards-proxy.svonderbruegge.workers.dev";
+const DEMO_USER = "John Smith";
+
+/* =====================================================================
+   DATA (sample data for Phase 1; moves to Cloudflare D1 in Phase 2)
+   ===================================================================== */
+const COURSE_DATA = {
+  "Middle School": {
+    "Bible": ["Essentials of the Christian Faith: Old Testament (7)", "Biblical Worldview (8)"],
+    "Business & Communications": ["Intro to Business"],
+    "English": ["Foundations of Writing and Literature 7", "Foundations of Writing and Literature 7 (Honors)", "Foundations of Writing and Literature 8", "Foundations of Writing and Literature 8 (Honors)"],
+    "History & Social Studies": ["Global Studies 7", "American History 8"],
+    "Mathematics": ["Math 7", "Pre-Algebra (Fundamentals)", "Pre-Algebra", "Algebra 1", "Algebra 1 (Honors)", "Math 8", "Algebra 2"],
+    "Science": ["Life Science 7", "Physical Science 8"],
+    "Fine Arts": ["Art 7 & 8", "Band 7 & 8", "Chorus 7 & 8", "Orchestra 7 & 8", "Musical Theatre 7 & 8", "Theatre Arts 7 & 8"],
+    "World Languages": ["Spanish I", "French I"],
+    "Physical Education": [],
+    "STEM": ["STEM 7", "STEM 8"],
+    "Pathways": ["Study Lab 7 and 8", "Foundations of Writing and Literature 7 and 8", "English Skills 7 and 8"]
+  },
+  "Upper School": {
+    "Bible": ["New Testament", "Christian Ethics", "Church History", "Spiritual Disciplines & Leadership", "Worldviews"],
+    "Business & Communications": ["Introduction to Business", "Principles of Economics", "Finance and Accounting", "Marketing 1", "Entrepreneurship: Marketing", "Entrepreneurship: Pawprint Coffee", "Feature Journalism – Yearbook 1", "Feature Journalism – Yearbook 2", "News Journalism 1 – 800 News", "News Journalism 2 – 800 News", "Multimedia / Video Storytelling", "Advanced Video Storytelling"],
+    "English": ["Freshman Expository Writing", "Freshman Expository Writing (Honors)", "Literature of Western Civilization", "Literature of Western Civilization (Honors)", "American Literature", "American Literature (Honors)", "Advanced Expository Writing", "Language & Composition (AP)", "Literature & Composition (AP)", "Speech Communication", "ESL Intermediate Reading and Writing", "ESL Advanced Reading and Writing"],
+    "History & Social Studies": ["Western Civilization (Honors)", "Advanced U.S. History (AP)", "Advanced U.S. Government (AP)", "American Government"],
+    "Mathematics": ["Geometry (Honors)", "Algebra 2 (Honors)", "Pre-Calculus", "Pre-Calculus (Honors)", "Precalculus with Calculus AB (AP)", "Calculus AB (AP)", "Calculus BC (AP)", "Multivariable 3-D Calculus", "Statistics", "Statistics (AP)"],
+    "Science": ["Biology", "Chemistry", "Physics 9 (Honors)", "Physics 1 & 2 (AP)", "Psychology", "Human Anatomy and Physiology"],
+    "Fine Arts": ["Introduction to Visual Art", "Ceramics 1", "Ceramics 2", "Digital Photography", "Drawing", "3-D Design", "Graphic Design", "Oil Painting", "Watercolor Painting", "Printmaking", "Advanced Studio Art", "AP Studio Art", "AP Art History", "Band", "Orchestra", "Chamber Choir", "Concert Choir", "Men's Chorus", "Women's Chorus", "Jazz Band", "Music Composition", "Music Theory (AP)", "Theatre Arts: Improvisation", "Theatre Arts: Production and Design", "Theatre Arts: Scripts and Styles", "Theatre Arts: Advanced Theatre Arts"],
+    "World Languages": ["Spanish 2", "Spanish 3", "Spanish 3 (Honors)", "Spanish 4", "French 3", "French 3 (Honors)", "French 4", "French 4 (AP)", "French 5", "Advanced Spanish 5"],
+    "Physical Education": ["Health & Fitness", "Female Fitness", "Male Fitness", "Strength & Conditioning", "Advanced Strength & Conditioning"],
+    "STEM": ["Principles of Engineering", "Computer Assisted Design (CAD)", "Introduction to Computer Programming", "Advanced Computer Programming with C++", "Healthcare Exploration", "Robotics"],
+    "Pathways": ["Study Lab 9-12", "Freshman Expository Writing CWC", "Western Civilization CWC", "American Literature CWC", "Advanced Expository Writing CWC", "English Skills 9-12"]
+  }
+};
+
+const WESTMINSTER_PORTRAIT = {
+  title: "Westminster Portrait of a Graduate",
+  tagline: "Westminster graduates love the Lord, value learning, and seek to discover God's created order...",
+  traits: [
+    { code: "WCA-POG-1", description: "Love the Lord with all their hearts and walk with him." },
+    { code: "WCA-POG-2", description: "Know God created them with beauty and purpose and live to bear his image by creating things of beauty and purpose." },
+    { code: "WCA-POG-3", description: "Understand the world around them and discern and reject the cultural idols of their day." },
+    { code: "WCA-POG-4", description: "Value learning and seek to discover God's created order." },
+    { code: "WCA-POG-5", description: "Find joy in their role as agents of kingdom restoration in every area of life." },
+    { code: "WCA-POG-6", description: "Honor the Lord by honoring their families and serving their communities." },
+    { code: "WCA-POG-7", description: "Cultivate their experience at Westminster by pressing on toward the high calling of Christ Jesus." }
+  ]
+};
+
+// Prompts shown for departments whose portraits are not written yet.
+const unwrittenPortrait = (prefix) => [
+  { code: `${prefix}-POG-1`, description: "Express their \"Love of the Lord\" ..." },
+  { code: `${prefix}-POG-2`, description: "\"Know God Created Them\" ..." },
+  { code: `${prefix}-POG-3`, description: "\"Understand the World\" ..." },
+  { code: `${prefix}-POG-4`, description: "\"Value Learning\" ..." },
+  { code: `${prefix}-POG-5`, description: "\"Find Joy\" ..." },
+  { code: `${prefix}-POG-6`, description: "Honor the Lord ..." },
+  { code: `${prefix}-POG-7`, description: "Cultivate their experience ..." }
+];
+
+// status: "complete" | "partial" | "unwritten"
+const DEPARTMENT_PORTRAITS = {
+  "Bible": {
+    title: "Bible Department Portrait", status: "unwritten",
+    tagline: "Westminster Bible Department Graduates will be people who...",
+    standards: unwrittenPortrait("BIB")
+  },
+  "Business & Communications": {
+    title: "Business & Communications Department Portrait", status: "complete",
+    tagline: "Westminster Business and Communications Department Graduates will be people who...",
+    standards: [
+      { code: "BUS-POG-1", description: "Express their \"Love of the Lord\" in the way he has gifted them to create, connect, and capture value." },
+      { code: "BUS-POG-2", description: "\"Know God Created Them\" by reflecting His image through the work of creating, caring (maintaining), and commissioning (engaging others)." },
+      { code: "BUS-POG-3", description: "\"Understand the World\" by pushing back on consumerism while redefining the mission of life and purpose of money." },
+      { code: "BUS-POG-4", description: "\"Value Learning\", by engaging in real work that meets a real need for a real audience." },
+      { code: "BUS-POG-5", description: "\"Find Joy\" in the process of developing the correctives for God's intended creation." },
+      { code: "BUS-POG-6", description: "Honor the Lord by engaging the world through restoring relationships with God, relationships with others, relationships with creation and knowledge of self." },
+      { code: "BUS-POG-7", description: "Cultivate their experience through the work Jesus sets before them." }
+    ]
+  },
+  "English": {
+    title: "English Department Portrait", status: "complete",
+    tagline: "Westminster English Department Graduates will be people who...",
+    standards: [
+      { code: "ENG-POG-1", description: "Appreciate God's creativity and love in the way he has gifted them, his image bearers, with language." },
+      { code: "ENG-POG-2", description: "Recognize that literacy has power to deepen their understanding of God and the universe He created with His Word." },
+      { code: "ENG-POG-3", description: "Find pleasure, inspiration, and joy in the reading, writing, listening, and speaking of language." },
+      { code: "ENG-POG-4", description: "Read widely and deeply, appreciating God's truth and redemptive story in a variety of genres." },
+      { code: "ENG-POG-5", description: "Write and speak truth with purpose, imagination, and skill in their own unique voice and style." },
+      { code: "ENG-POG-6", description: "Exercise wisdom and discernment when encountering the artistic skill and rhetoric of the broader culture." },
+      { code: "ENG-POG-7", description: "Connect learning with living out God's calling for their lives by allowing His truth to shape their character." },
+      { code: "ENG-POG-8", description: "Cultivate their experience at Westminster by seeking justice." }
+    ]
+  },
+  "History & Social Studies": {
+    title: "History & Social Studies Department Portrait", status: "unwritten",
+    tagline: "History Department Graduates will be people who...",
+    standards: unwrittenPortrait("HIS")
+  },
+  "Mathematics": {
+    title: "Mathematics Department Portrait", status: "complete",
+    tagline: "Math Department Graduates will be people who...",
+    standards: [
+      { code: "MATH-POG-1", description: "Express their \"Love of the Lord\" in their understanding of their own finiteness while seeing the infinite nature of God through his creation." },
+      { code: "MATH-POG-2", description: "Know God Created Them to use mathematics to picture, model, or describe truths in relationships in the world." },
+      { code: "MATH-POG-3", description: "Understand the World and God better in discovering order through math." },
+      { code: "MATH-POG-4", description: "Value Learning in their creative approaches to problem solving." },
+      { code: "MATH-POG-5", description: "Find Joy in the confident sharing of ideas, knowing they can learn from failure." },
+      { code: "MATH-POG-6", description: "Honor the Lord by being active listeners and respecting others' ideas." },
+      { code: "MATH-POG-7", description: "Cultivate their experience at WCA as builders of community and as Image reflectors who are rational, creative, and relational." }
+    ]
+  },
+  "Science": {
+    title: "Science Department Portrait", status: "unwritten",
+    tagline: "Science Department Graduates will be people who...",
+    standards: unwrittenPortrait("SCI")
+  },
+  "Fine Arts": {
+    title: "Fine Arts (Performing Arts) Department Portrait", status: "partial",
+    tagline: "Westminster Performing Arts Department Graduates will be people who...",
+    standards: [
+      { code: "ART-POG-1", description: "Exhibit goodness by working to create a culture of consideration and creativity and using their talents to serve their community. (Love the Lord with all their hearts, walking with him to exhibit goodness...)" },
+      { code: "ART-POG-2", description: "Stand for truth by discovering and presenting our place in a metanarrative and discerning the value behind different art that the world presents." },
+      { code: "ART-POG-3", description: "Increase beauty by finding places to be creative throughout life, intelligently consume the art around them, and support art with their time, talent, and treasure." }
+    ]
+  },
+  "World Languages": {
+    title: "World Languages Department Portrait", status: "partial",
+    tagline: "World Language Department Graduates will be people who...",
+    standards: [
+      { code: "LANG-POG-1", description: "Love the Lord by loving His people." },
+      { code: "LANG-POG-2", description: "Know God created them with beauty and purpose and live to bear His image by communicating in more than one language." },
+      { code: "LANG-POG-3", description: "Understand the world by actively listening with empathy." },
+      { code: "LANG-POG-4", description: "Value learning by discerning truth." },
+      { code: "LANG-POG-5", description: "Find joy in embracing cultures." },
+      { code: "LANG-POG-6", description: "Honor the Lord by serving compassionately." }
+    ]
+  },
+  "Physical Education": {
+    title: "Physical Education Department Portrait", status: "complete",
+    tagline: "Physical Education Department Graduates will be people who learn, value, and practice the discipline of presenting their bodies as a living sacrifice to God.",
+    standards: [
+      { code: "PE-POG-1", description: "Express their \"Love of the Lord\" by giving their bodies in a way that will praise Him." },
+      { code: "PE-POG-2", description: "\"Know God Created Them\" holistically, pursuing understanding His design." },
+      { code: "PE-POG-3", description: "\"Understand the World\" by discerning healthy lifestyles." },
+      { code: "PE-POG-4", description: "\"Value Learning\" by discovering, nurturing, and applying a lifelong pursuit of health." },
+      { code: "PE-POG-5", description: "\"Find Joy\" in the discipline, perseverance, and endurance that produces a healthy life." },
+      { code: "PE-POG-6", description: "Honor the Lord by appreciating and caring for their bodies with grit and grace." },
+      { code: "PE-POG-7", description: "Cultivate their experience through demonstrating healthy leadership within their community." }
+    ]
+  },
+  "STEM": {
+    title: "STEM Department Portrait", status: "unwritten",
+    tagline: "STEM Department Graduates will be people who...",
+    standards: unwrittenPortrait("STEM")
+  },
+  "Pathways": {
+    title: "Pathways (Special Services) Department Portrait", status: "complete",
+    tagline: "Westminster Special Services Department Graduates will be people who...",
+    standards: [
+      { code: "PATH-POG-1", description: "Love the Lord through seeking and submitting to God's intended plan for their lives." },
+      { code: "PATH-POG-2", description: "Know God Created Them and develop confidence in their unique gifts and purposes as image-bearers." },
+      { code: "PATH-POG-3", description: "Understand the World by embracing Christian truth and rejecting worldly values." },
+      { code: "PATH-POG-4", description: "Value Learning by focusing on their own journey to realize their potential and identity in God." },
+      { code: "PATH-POG-5", description: "Find Joy not only in their originality and strengths, but also in their weaknesses as they learn." },
+      { code: "PATH-POG-6", description: "Honor the Lord by realizing the opportunities God has laid before them." },
+      { code: "PATH-POG-7", description: "Cultivate their experience by advocating for themselves and empathizing with their peers in a community of learners who see the support they have been given as a scaffold, and not as a perpetual crutch." }
+    ]
+  }
+};
+
+const PORTRAIT_STATUS_NOTE = {
+  partial: "This portrait is partly written.",
+  unwritten: "This portrait has not been written yet. The prompts below show what it needs."
+};
+
+// Rigor scale (from "The Rigor Scale"). Index 0–3 on each axis.
+const COMPLEXITY_LEVELS = ["Retrieval", "Comprehension", "Analysis", "Knowledge Utilization"];
+const AUTONOMY_LEVELS = ["Low", "Medium", "Medium High", "High"];
+
+// Sample standards, keyed by course name.
+const SAMPLE_STANDARDS = {
+  "Algebra 1": [
+    { id: "ALG1-001", category: "Linear Equations", description: "Students will solve multi-step linear equations in one variable using algebraic properties.", rigorPlacement: { complexity: 2, autonomy: 2 }, status: "approved", submitted: true, createdBy: "Sarah Johnson", createdDate: "2024-01-15", alignsTo: ["MATH-POG-1", "MATH-POG-2"], assessments: ["Quiz", "Test", "Problem Set"] },
+    { id: "ALG1-002", category: "Factoring", description: "Students will factor quadratic expressions and solve quadratic equations by factoring.", rigorPlacement: { complexity: 3, autonomy: 2 }, status: "approved", submitted: true, createdBy: "Sarah Johnson", createdDate: "2024-01-18", alignsTo: ["MATH-POG-1", "MATH-POG-2"], assessments: ["Quiz", "Test", "Problem Set"] },
+    { id: "ALG1-003", category: "Functions", description: "Students will understand, graph, and interpret linear functions in real-world contexts.", rigorPlacement: { complexity: 3, autonomy: 3 }, status: "draft", submitted: true, createdBy: "John Smith", createdDate: "2024-02-01", alignsTo: ["MATH-POG-1", "MATH-POG-3"], assessments: ["Test", "Performance Task"] }
+  ],
+  "Algebra 2": [
+    { id: "ALG2-001", category: "Factoring Polynomials", description: "Students will factor polynomial expressions, including sums and differences of cubes, and use the factors to find real zeros.", rigorPlacement: { complexity: 2, autonomy: 1 }, status: "approved", submitted: true, createdBy: "Sarah Johnson", createdDate: "2024-01-22", alignsTo: ["MATH-POG-3", "MATH-POG-4"], assessments: ["Quiz", "Test"] }
+  ],
+  "Pre-Calculus": [
+    { id: "PREC-001", category: "Polynomial Functions", description: "Students will use factoring and the Rational Root Theorem to analyze polynomial functions and sketch their graphs.", rigorPlacement: { complexity: 2, autonomy: 2 }, status: "approved", submitted: true, createdBy: "David Park", createdDate: "2024-02-05", alignsTo: ["MATH-POG-2", "MATH-POG-4"], assessments: ["Test", "Graphing Project"] }
+  ],
+  "Biology": [
+    { id: "BIO-001", category: "Cell Structure", description: "Students will identify and describe the structure and function of prokaryotic and eukaryotic cells.", rigorPlacement: { complexity: 1, autonomy: 0 }, status: "approved", submitted: true, createdBy: "Mike Chen", createdDate: "2024-01-20", alignsTo: ["SCI-POG-1", "SCI-POG-2"], assessments: ["Lab Report", "Test"] }
+  ],
+  "American Literature": [
+    { id: "AMEL-001", category: "Freedom and Community", description: "Students will analyze how American authors portray the tension between individual freedom and community across literary periods.", rigorPlacement: { complexity: 2, autonomy: 2 }, status: "draft", submitted: false, createdBy: "Rachel Moore", createdDate: "2024-02-12", alignsTo: ["ENG-POG-4", "ENG-POG-6"], assessments: ["Literary Analysis Essay", "Socratic Seminar"] }
+  ]
+};
+
+// "Pull from Bank" sample items (mock data until real banks are connected).
+const BANK_ITEMS = [
+  { source: "Honors bank", code: "ALG1H-004", text: "Students will solve systems of linear equations graphically and algebraically and interpret the solution in context." },
+  { source: "Honors bank", code: "ALG1H-007", text: "Students will factor quadratic expressions, including those with a leading coefficient other than one." },
+  { source: "Common Core", code: "CCSS.MATH.CONTENT.HSA.REI.A.1", text: "Students will explain each step in solving a simple equation and justify the method used." },
+  { source: "Common Core", code: "CCSS.MATH.CONTENT.HSA.SSE.A.2", text: "Students will use the structure of an expression to identify ways to rewrite it." },
+  { source: "Common Core", code: "CCSS.ELA-LITERACY.RL.11-12.2", text: "Students will determine two or more themes of a text and analyze how they develop and interact." },
+  { source: "Missouri Learning Standards", code: "MO.A1.REI.A.1", text: "Students will understand solving equations as a process of reasoning and explain the reasoning." },
+  { source: "Missouri Learning Standards", code: "MO.9-12.LS1.A", text: "Students will construct an explanation of how the structure of DNA determines the structure of proteins." }
+];
+
+const BANK_SOURCE_STYLES = {
+  "Honors bank": "bg-amber-50 border-amber-200 text-amber-900",
+  "Common Core": "bg-blue-50 border-blue-200 text-blue-900",
+  "Missouri Learning Standards": "bg-purple-50 border-purple-200 text-purple-900"
+};
+
+/* =====================================================================
+   HELPERS
+   ===================================================================== */
+const countWords = (text) => text.trim().split(/\s+/).filter(Boolean).length;
+const today = () => new Date().toISOString().slice(0, 10);
+
+// Finds the school and department for a course name.
+const findCourseHome = (course) => {
+  for (const school of Object.keys(COURSE_DATA)) {
+    for (const dept of Object.keys(COURSE_DATA[school])) {
+      if (COURSE_DATA[school][dept].includes(course)) return { school, dept };
+    }
+  }
+  return { school: "", dept: "" };
+};
+
+// Course abbreviation: first word's first 3 letters plus initials/numbers of the rest.
+// "Algebra 1" -> ALG1, "Biology" -> BIO, "Pre-Calculus" -> PREC, "Algebra 1 (Honors)" -> ALG1H
+const courseAbbreviation = (course) => {
+  const words = course.replace(/[()&:–\/]/g, " ").split(/[\s-]+/).filter(Boolean);
+  if (!words.length) return "STD";
+  const first = words[0].replace(/[^A-Za-z0-9]/g, "").slice(0, 3);
+  const rest = words.slice(1).map(w => /^\d+$/.test(w) ? w : w[0]).join("");
+  return (first + rest).toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+};
+
+// Next unused ID for a course, checking every existing standard.
+const nextStandardId = (course, standards) => {
+  const prefix = courseAbbreviation(course);
+  const used = new Set(Object.values(standards).flat().map(s => s.id));
+  let n = 1;
+  while (used.has(`${prefix}-${String(n).padStart(3, "0")}`)) n++;
+  return `${prefix}-${String(n).padStart(3, "0")}`;
+};
+
+const matchesStatus = (s, filter, currentUser) => {
+  if (filter === "approved") return s.status === "approved";
+  if (filter === "drafts") return s.status === "draft";
+  if (filter === "myDrafts") return s.status === "draft" && s.createdBy === currentUser;
+  if (filter === "pendingApproval") return s.status === "draft" && s.submitted;
+  return true;
+};
+
+const matchesQuery = (s, course, query) => {
+  const haystack = `${s.id} ${s.category} ${s.description} ${course}`.toLowerCase();
+  return query.toLowerCase().split(/\s+/).filter(Boolean).every(word => haystack.includes(word));
+};
+
+const portraitText = (code) => {
+  const all = [...WESTMINSTER_PORTRAIT.traits, ...Object.values(DEPARTMENT_PORTRAITS).flatMap(p => p.standards)];
+  return all.find(p => p.code === code)?.description || "";
+};
+
+/* =====================================================================
+   ICONS (inline SVG, replacing lucide-react)
+   ===================================================================== */
+const Svg = ({ className = "w-4 h-4", children }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{children}</svg>
+);
+const ChevronDown = (p) => <Svg {...p}><path d="m6 9 6 6 6-6" /></Svg>;
+const ChevronRight = (p) => <Svg {...p}><path d="m9 18 6-6-6-6" /></Svg>;
+const PlusIcon = (p) => <Svg {...p}><path d="M5 12h14" /><path d="M12 5v14" /></Svg>;
+const SearchIcon = (p) => <Svg {...p}><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></Svg>;
+const BookOpen = (p) => <Svg {...p}><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" /><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" /></Svg>;
+const TargetIcon = (p) => <Svg {...p}><circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="2" /></Svg>;
+const AwardIcon = (p) => <Svg {...p}><circle cx="12" cy="8" r="6" /><path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11" /></Svg>;
+const UsersIcon = (p) => <Svg {...p}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></Svg>;
+const SparklesIcon = (p) => <Svg {...p}><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" /></Svg>;
+const DatabaseIcon = (p) => <Svg {...p}><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M3 5V19A9 3 0 0 0 21 19V5" /><path d="M3 12A9 3 0 0 0 21 12" /></Svg>;
+const XIcon = (p) => <Svg {...p}><path d="M18 6 6 18" /><path d="m6 6 12 12" /></Svg>;
+
+/* =====================================================================
+   SHARED COMPONENTS (all defined at the top level – never nest components)
+   ===================================================================== */
+const Notice = ({ tone = "info", children }) => {
+  const tones = {
+    info: "bg-blue-50 border-blue-200 text-blue-900",
+    success: "bg-green-50 border-green-200 text-green-900",
+    error: "bg-red-50 border-red-200 text-red-800"
+  };
+  return <div role={tone === "error" ? "alert" : "status"} className={`p-4 border rounded-lg text-sm ${tones[tone]}`}>{children}</div>;
+};
+
+const SelectBox = ({ label, value, onChange, disabled, placeholder, options }) => (
+  <div>
+    {label && <label className="block text-sm font-medium text-gray-700 mb-2">{label}</label>}
+    <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} aria-label={label || placeholder}
+      className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100">
+      <option value="">{placeholder}</option>
+      {options.map(o => <option key={o} value={o}>{o}</option>)}
+    </select>
+  </div>
+);
+
+const SchoolDeptCourse = ({ school, dept, course, onSchool, onDept, onCourse, showLabels }) => (
+  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <SelectBox label={showLabels ? "School *" : ""} placeholder="Select School" value={school} onChange={onSchool}
+      options={Object.keys(COURSE_DATA)} />
+    <SelectBox label={showLabels ? "Department *" : ""} placeholder="Select Department" value={dept} onChange={onDept}
+      disabled={!school} options={school ? Object.keys(COURSE_DATA[school]) : []} />
+    <SelectBox label={showLabels ? "Course *" : ""} placeholder="Select Course" value={course} onChange={onCourse}
+      disabled={!dept} options={school && dept ? COURSE_DATA[school][dept] : []} />
+  </div>
+);
+
+const PortraitBox = ({ color, Icon, title, tagline, intro, items, note, open, onToggle }) => {
+  const c = color === "blue"
+    ? { box: "from-blue-50 to-indigo-50 border-blue-200", icon: "text-blue-600", tag: "text-blue-800", item: "border-blue-400", label: "text-blue-900", code: "text-blue-700", btn: "text-blue-600 hover:text-blue-800" }
+    : { box: "from-purple-50 to-pink-50 border-purple-200", icon: "text-purple-600", tag: "text-purple-800", item: "border-purple-400", label: "text-purple-900", code: "text-purple-700", btn: "text-purple-600 hover:text-purple-800" };
+  return (
+    <div className={`bg-gradient-to-r ${c.box} rounded-lg p-6 border-2`}>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start gap-3 flex-1">
+          <Icon className={`w-6 h-6 ${c.icon} flex-shrink-0 mt-1`} />
+          <div className="flex-1">
+            <h3 className="text-lg font-bold text-gray-800 mb-1">{title}</h3>
+            <p className={`text-sm ${c.tag} italic`}>{tagline}</p>
+            {note && <p className="text-xs text-gray-600 mt-2">{note}</p>}
+            {open && (
+              <div className="space-y-2 mt-4">
+                {intro && <p className={`text-sm font-semibold ${c.label} mb-3`}>{intro}</p>}
+                {items.map(item => (
+                  <div key={item.code} className={`bg-white/60 rounded p-3 border-l-4 ${c.item}`}>
+                    <div className="text-sm text-gray-800">
+                      <span className={`font-semibold italic ${c.label}`}>Now What?</span> {item.description}
+                      <span className={`${c.code} font-medium`}> ({item.code})</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        <button onClick={onToggle} aria-expanded={open}
+          className={`${c.btn} text-sm font-medium whitespace-nowrap flex items-center gap-1`}>
+          {open ? <><ChevronDown />Hide Details</> : <><ChevronRight />View Full Portrait</>}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const PortraitPanels = ({ dept, showWestminster, setShowWestminster, showDepartment, setShowDepartment }) => {
+  const portrait = DEPARTMENT_PORTRAITS[dept];
+  return (
+    <div className="space-y-4">
+      <PortraitBox color="blue" Icon={AwardIcon} title={WESTMINSTER_PORTRAIT.title} tagline={WESTMINSTER_PORTRAIT.tagline}
+        intro="Westminster Graduates:" items={WESTMINSTER_PORTRAIT.traits}
+        open={showWestminster} onToggle={() => setShowWestminster(!showWestminster)} />
+      {portrait && (
+        <PortraitBox color="purple" Icon={TargetIcon} title={portrait.title} tagline={portrait.tagline}
+          note={PORTRAIT_STATUS_NOTE[portrait.status]} items={portrait.standards}
+          open={showDepartment} onToggle={() => setShowDepartment(!showDepartment)} />
+      )}
+    </div>
+  );
+};
+
+const StatusBadge = ({ standard }) => {
+  const isDraft = standard.status === "draft";
+  return (
+    <div className="flex items-center gap-2">
+      <div className={`w-3 h-3 rounded-full ${isDraft ? "bg-yellow-400" : "bg-blue-600"}`}></div>
+      <span className={`text-sm font-medium ${isDraft ? "text-yellow-700" : "text-blue-700"}`}>{isDraft ? "DRAFT" : "APPROVED"}</span>
+      {isDraft && !standard.submitted && <span className="text-xs text-gray-500">(not yet submitted)</span>}
+    </div>
+  );
+};
+
+const RigorTag = ({ placement }) => {
+  if (!placement) return <span className="px-3 py-1 rounded-full text-xs font-medium border bg-gray-50 text-gray-500 border-gray-200">Rigor not analyzed</span>;
+  return (
+    <span className="px-3 py-1 rounded-full text-xs font-medium border bg-indigo-50 text-indigo-800 border-indigo-200">
+      {COMPLEXITY_LEVELS[placement.complexity]}, {AUTONOMY_LEVELS[placement.autonomy]} autonomy
+    </span>
+  );
+};
+
+// The rigor scale grid. Rows run Retrieval (bottom) to Knowledge Utilization (top);
+// columns run Low to High autonomy. The dot sits in the center of its cell.
+const RigorGrid = ({ placement, compact = false }) => {
+  const W = 520, H = compact ? 220 : 300, left = 150, top = 14, right = 14, bottom = 48;
+  const cw = (W - left - right) / 4, ch = (H - top - bottom) / 4;
+  const cx = placement ? left + cw * (placement.autonomy + 0.5) : 0;
+  const cy = placement ? top + ch * (3 - placement.complexity + 0.5) : 0;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full max-w-xl" role="img"
+      aria-label={placement ? `Rigor placement: ${COMPLEXITY_LEVELS[placement.complexity]} complexity, ${AUTONOMY_LEVELS[placement.autonomy]} autonomy` : "Rigor scale grid"}>
+      {/* "Rigor" zone: high complexity, high autonomy */}
+      <rect x={left + cw * 2} y={top} width={cw * 2} height={ch * 2} fill="#dbeafe" />
+      <text x={left + cw * 4 - 6} y={top + 14} textAnchor="end" fontSize="11" fill="#1e40af">Rigor</text>
+      {[0, 1, 2, 3].map(r => [0, 1, 2, 3].map(c => (
+        <rect key={`${r}-${c}`} x={left + cw * c} y={top + ch * r} width={cw} height={ch} fill="none" stroke="#e5e7eb" />
+      )))}
+      <rect x={left} y={top} width={cw * 4} height={ch * 4} fill="none" stroke="#9ca3af" />
+      {COMPLEXITY_LEVELS.map((label, i) => (
+        <text key={label} x={left - 8} y={top + ch * (3 - i + 0.5) + 4} textAnchor="end" fontSize="12" fill="#4b5563">{label}</text>
+      ))}
+      {AUTONOMY_LEVELS.map((label, i) => (
+        <text key={label} x={left + cw * (i + 0.5)} y={top + ch * 4 + 18} textAnchor="middle" fontSize="12" fill="#4b5563">{label}</text>
+      ))}
+      <text x={left + cw * 2} y={H - 6} textAnchor="middle" fontSize="12" fontWeight="600" fill="#374151">Autonomy</text>
+      {placement && (
+        <g>
+          <circle cx={cx} cy={cy} r="9" fill="#4f46e5" stroke="white" strokeWidth="2" />
+          <text x={cx} y={cy - 14} textAnchor="middle" fontSize="11" fontWeight="700" fill="#4f46e5">AI</text>
+        </g>
+      )}
+    </svg>
+  );
+};
+
+const StandardCard = ({ standard, course, expanded, onToggle, userRole, onApprove, onReject, showPath }) => {
+  const [rejecting, setRejecting] = useState(false);
+  const [comment, setComment] = useState("");
+  const isDraft = standard.status === "draft";
+  const canReview = isDraft && standard.submitted && (userRole === "chair" || userRole === "principal");
+  const home = findCourseHome(course);
+  return (
+    <div className="bg-white rounded-lg shadow-md overflow-hidden border-l-4" style={{ borderLeftColor: isDraft ? "#FCD34D" : "#2563EB" }}>
+      <button className="w-full text-left p-4 hover:bg-gray-50 transition-colors" onClick={onToggle} aria-expanded={expanded}>
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex-1">
+            {showPath && (
+              <p className="text-xs text-gray-500 mb-2">
+                {home.dept} Department Portrait <span aria-hidden="true">›</span> {course}
+              </p>
+            )}
+            <div className="flex items-center gap-3 mb-2 flex-wrap">
+              <StatusBadge standard={standard} />
+              <span className="font-semibold text-blue-600">{standard.id}</span>
+              <span className="text-sm text-gray-600">{standard.category}</span>
+              <RigorTag placement={standard.rigorPlacement} />
+            </div>
+            <p className={`text-gray-700 ${isDraft ? "italic" : ""}`}>{standard.description}</p>
+            {isDraft && (
+              <p className="mt-2 text-sm text-gray-500">Created by {standard.createdBy}, {standard.createdDate}</p>
+            )}
+          </div>
+          {expanded ? <ChevronDown className="w-5 h-5 text-gray-400 flex-shrink-0" /> : <ChevronRight className="w-5 h-5 text-gray-400 flex-shrink-0" />}
+        </div>
+      </button>
+      {expanded && (
+        <div className="px-4 py-4 bg-gray-50 border-t space-y-4">
+          <div>
+            <h4 className="font-semibold text-sm text-gray-700 mb-2">Aligns to:</h4>
+            <div className="space-y-1">
+              {standard.alignsTo.map(code => (
+                <p key={code} className="text-sm text-gray-700">
+                  <span className="px-2 py-0.5 mr-2 bg-purple-100 text-purple-800 rounded-full text-xs font-medium">{code}</span>
+                  {portraitText(code)}
+                </p>
+              ))}
+            </div>
+          </div>
+          {standard.rigorPlacement && (
+            <div>
+              <h4 className="font-semibold text-sm text-gray-700 mb-2">Rigor placement:</h4>
+              <div className="bg-white rounded-lg p-3 border"><RigorGrid placement={standard.rigorPlacement} compact /></div>
+            </div>
+          )}
+          {standard.assessments?.length > 0 && (
+            <div>
+              <h4 className="font-semibold text-sm text-gray-700 mb-2">Suggested assessments:</h4>
+              <div className="flex flex-wrap gap-2">
+                {standard.assessments.map((a, i) => <span key={i} className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm">{a}</span>)}
+              </div>
+            </div>
+          )}
+          {canReview && !rejecting && (
+            <div className="flex gap-2 pt-2">
+              <button onClick={() => onApprove(course, standard.id)} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium">Approve Standard</button>
+              <button onClick={() => setRejecting(true)} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-medium">Reject with Comments</button>
+            </div>
+          )}
+          {canReview && rejecting && (
+            <div className="space-y-2 pt-2">
+              <label className="block text-sm font-medium text-gray-700" htmlFor={`reject-${standard.id}`}>Comments for {standard.createdBy}</label>
+              <textarea id={`reject-${standard.id}`} rows={3} value={comment} onChange={(e) => setComment(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-400" />
+              <div className="flex gap-2">
+                <button disabled={!comment.trim()} onClick={() => onReject(course, standard.id, comment)}
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-gray-300 text-sm font-medium">Send Rejection</button>
+                <button onClick={() => { setRejecting(false); setComment(""); }} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-sm font-medium">Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* =====================================================================
+   BROWSE STANDARDS
+   ===================================================================== */
+const FILTERS = [
+  { key: "all", label: "All Standards" },
+  { key: "approved", label: "Approved Only" },
+  { key: "drafts", label: "All Drafts" },
+  { key: "myDrafts", label: "My Drafts" }
+];
+
+const FilterPills = ({ statusFilter, setStatusFilter, userRole }) => {
+  const filters = (userRole === "chair" || userRole === "principal")
+    ? [...FILTERS, { key: "pendingApproval", label: "Pending My Approval" }] : FILTERS;
+  return (
+    <div className="flex flex-wrap gap-2">
+      {filters.map(f => (
+        <button key={f.key} onClick={() => setStatusFilter(f.key)} aria-pressed={statusFilter === f.key}
+          className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${statusFilter === f.key ? "bg-blue-600 text-white" : "bg-gray-200 text-gray-700 hover:bg-gray-300"}`}>
+          {f.label}
+        </button>
+      ))}
+    </div>
+  );
+};
+
+const SearchBar = ({ query, setQuery, scope, setScope, courseSelected, course }) => (
+  <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-3 flex flex-col md:flex-row gap-3 md:items-center">
+    <div className="relative flex-1">
+      <SearchIcon className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+      <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search standards"
+        placeholder="Search standards, for example “factoring”"
+        className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+    </div>
+    {courseSelected && (
+      <div className="flex gap-1 text-sm" role="group" aria-label="Search scope">
+        {[{ k: "course", l: `In ${course}` }, { k: "all", l: "All courses" }].map(o => (
+          <button key={o.k} onClick={() => setScope(o.k)} aria-pressed={scope === o.k}
+            className={`px-3 py-2 rounded-lg font-medium ${scope === o.k ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"}`}>
+            {o.l}
+          </button>
+        ))}
+      </div>
+    )}
+  </div>
+);
+
+const EmptyState = ({ title, detail }) => (
+  <div className="text-center py-12 text-gray-500">
+    <BookOpen className="w-12 h-12 mx-auto mb-3 text-gray-400" />
+    <p className="font-medium">{title}</p>
+    {detail && <p className="text-sm mt-2 text-gray-400">{detail}</p>}
+  </div>
+);
+
+const BrowseView = ({ standards, userRole, currentUser, onApprove, onReject, flash }) => {
+  const [school, setSchool] = useState("");
+  const [dept, setDept] = useState("");
+  const [course, setCourse] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [query, setQuery] = useState("");
+  const [scope, setScope] = useState("course");
+  const [expanded, setExpanded] = useState({});
+  const [showWestminster, setShowWestminster] = useState(false);
+  const [showDepartment, setShowDepartment] = useState(false);
+
+  const searching = query.trim().length >= 2;
+  const searchAll = searching && (!course || scope === "all");
+
+  // Each result is { course, standard }.
+  const results = useMemo(() => {
+    const courses = searchAll ? Object.keys(standards) : (course ? [course] : []);
+    return courses.flatMap(c => (standards[c] || [])
+      .filter(s => matchesStatus(s, statusFilter, currentUser))
+      .filter(s => !searching || matchesQuery(s, c, query))
+      .map(s => ({ course: c, standard: s })));
+  }, [standards, course, statusFilter, currentUser, query, searching, searchAll]);
+
+  const toggle = (id) => setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
+
+  return (
+    <div className="space-y-6">
+      {flash && <Notice tone="success">{flash}</Notice>}
+      <FilterPills statusFilter={statusFilter} setStatusFilter={setStatusFilter} userRole={userRole} />
+      <SchoolDeptCourse school={school} dept={dept} course={course}
+        onSchool={(v) => { setSchool(v); setDept(""); setCourse(""); }}
+        onDept={(v) => { setDept(v); setCourse(""); }}
+        onCourse={setCourse} />
+      <SearchBar query={query} setQuery={setQuery} scope={scope} setScope={setScope} courseSelected={!!course} course={course} />
+
+      {dept && !searchAll && (
+        <PortraitPanels dept={dept} showWestminster={showWestminster} setShowWestminster={setShowWestminster}
+          showDepartment={showDepartment} setShowDepartment={setShowDepartment} />
+      )}
+
+      {searchAll && (
+        <p className="text-sm text-gray-600">{results.length} {results.length === 1 ? "standard" : "standards"} across all courses match “{query.trim()}”.</p>
+      )}
+
+      {results.length > 0 && (
+        <div className="space-y-3">
+          {results.map(({ course: c, standard }) => (
+            <StandardCard key={standard.id} standard={standard} course={c} expanded={!!expanded[standard.id]}
+              onToggle={() => toggle(standard.id)} userRole={userRole} onApprove={onApprove} onReject={onReject}
+              showPath={searchAll} />
+          ))}
+        </div>
+      )}
+
+      {results.length === 0 && (searching || course) && (
+        <EmptyState title={searching ? "No standards match that search." : "No standards found with the current filters."}
+          detail={searching ? "Try a shorter word, or switch the filter to All Standards." : "Try All Standards, or pick another course."} />
+      )}
+      {!course && !searching && (
+        <EmptyState title="Select a school, department, and course to view standards."
+          detail="Or search above to find standards across every course." />
+      )}
+    </div>
+  );
+};
+
+/* =====================================================================
+   CREATE STANDARD
+   ===================================================================== */
+const BankModal = ({ onPick, onClose }) => {
+  const [q, setQ] = useState("");
+  const items = BANK_ITEMS.filter(i => !q.trim() || `${i.code} ${i.text} ${i.source}`.toLowerCase().includes(q.trim().toLowerCase()));
+  const sources = [...new Set(BANK_ITEMS.map(i => i.source))];
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" aria-labelledby="bank-title">
+      <div className="bg-white rounded-lg max-w-3xl w-full max-h-[85vh] overflow-hidden flex flex-col">
+        <div className="p-6 border-b flex items-center justify-between">
+          <div>
+            <h3 id="bank-title" className="text-xl font-bold text-gray-800">Standard Bank</h3>
+            <p className="text-sm text-gray-500">Sample items for now. Choose one to fill in the description, then edit it.</p>
+          </div>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700" aria-label="Close"><XIcon className="w-6 h-6" /></button>
+        </div>
+        <div className="p-4 border-b">
+          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search the bank" aria-label="Search the bank"
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500" />
+        </div>
+        <div className="p-6 overflow-y-auto flex-1 space-y-5">
+          {sources.map(src => {
+            const list = items.filter(i => i.source === src);
+            if (!list.length) return null;
+            return (
+              <div key={src}>
+                <h4 className="font-semibold text-gray-800 mb-2">{src}</h4>
+                <div className="space-y-2">
+                  {list.map(item => (
+                    <button key={item.code} onClick={() => onPick(item.text)}
+                      className={`w-full text-left p-3 rounded border hover:shadow ${BANK_SOURCE_STYLES[src]}`}>
+                      <div className="font-medium text-sm">{item.code}</div>
+                      <div className="text-sm text-gray-700">{item.text}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          {!items.length && <p className="text-sm text-gray-500">Nothing in the bank matches that search.</p>}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const RigorAnalysisPanel = ({ analysis }) => (
+  <div className="p-6 bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-lg space-y-4">
+    <h3 className="font-bold text-gray-800 flex items-center gap-2"><SparklesIcon className="w-5 h-5 text-indigo-600" />AI Rigor Analysis</h3>
+    <div className="bg-white p-4 rounded-lg"><RigorGrid placement={analysis} /></div>
+    <p className="text-sm text-gray-700">
+      <strong>{COMPLEXITY_LEVELS[analysis.complexity]}</strong> complexity, <strong>{AUTONOMY_LEVELS[analysis.autonomy]}</strong> autonomy.
+      {analysis.rationale && <> {analysis.rationale}</>}
+    </p>
+    <div>
+      <h4 className="font-semibold text-sm text-gray-700 mb-2">Suggested assessments:</h4>
+      <div className="flex flex-wrap gap-2">
+        {analysis.assessments.map((a, i) => <span key={i} className="px-3 py-1 bg-indigo-100 text-indigo-800 rounded-full text-sm">{a}</span>)}
+      </div>
+      <p className="text-xs text-gray-500 mt-2">Suggestions only. If the placement looks wrong, revise the description and analyze again.</p>
+    </div>
+  </div>
+);
+
+const EMPTY_FORM = { school: "", department: "", course: "", category: "", description: "" };
+
+const CreateStandardView = ({ standards, currentUser, onSave }) => {
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [selectedPOGs, setSelectedPOGs] = useState([]);
+  const [analysis, setAnalysis] = useState(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [showBank, setShowBank] = useState(false);
+  const [message, setMessage] = useState(null); // { tone, text }
+
+  const set = (patch) => setForm(prev => ({ ...prev, ...patch }));
+  const words = countWords(form.description);
+  const deptStandards = form.department && DEPARTMENT_PORTRAITS[form.department] ? DEPARTMENT_PORTRAITS[form.department].standards : [];
+  const standardId = form.course ? nextStandardId(form.course, standards) : "";
+
+  const analyze = async () => {
+    if (countWords(form.description) < 4) {
+      setMessage({ tone: "error", text: "Write the full standard description before analyzing it." });
+      return;
+    }
+    if (WORKER_URL.includes("YOUR-SUBDOMAIN")) {
+      setMessage({ tone: "error", text: "AI analysis isn't connected yet. Add the Worker address to WORKER_URL in index.html." });
+      return;
+    }
+    setMessage(null);
+    setAnalyzing(true);
+    try {
+      const res = await fetch(WORKER_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: form.description, course: form.course, department: form.department, school: form.school })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+      setAnalysis(data);
+    } catch (err) {
+      console.error(err);
+      setMessage({ tone: "error", text: `The AI analysis didn't finish: ${err.message}. Try again in a moment.` });
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const save = (submit) => {
+    const problems = [];
+    if (!form.school || !form.department || !form.course) problems.push("choose a school, department, and course");
+    if (!form.category.trim()) problems.push("add a category");
+    if (!form.description.trim()) problems.push("write a description");
+    else if (!form.description.trim().toLowerCase().startsWith("students will")) problems.push("start the description with “Students will...”");
+    if (selectedPOGs.length < 1) problems.push("select at least one Department Portrait statement");
+    if (problems.length) {
+      setMessage({ tone: "error", text: `Before saving, ${problems.join(", ")}.` });
+      return;
+    }
+    onSave(form.course, {
+      id: standardId,
+      category: form.category.trim(),
+      description: form.description.trim(),
+      rigorPlacement: analysis ? { complexity: analysis.complexity, autonomy: analysis.autonomy } : null,
+      status: "draft",
+      submitted: submit,
+      createdBy: currentUser,
+      createdDate: today(),
+      alignsTo: selectedPOGs,
+      assessments: analysis ? analysis.assessments : []
+    });
+    setMessage({ tone: "success", text: submit
+      ? `${standardId} was submitted for approval. In this demo it appears in Browse until you reload the page.`
+      : `${standardId} was saved as a draft. In this demo it appears in Browse until you reload the page.` });
+    setForm(EMPTY_FORM);
+    setSelectedPOGs([]);
+    setAnalysis(null);
+  };
+
+  const togglePOG = (code) => setSelectedPOGs(prev =>
+    prev.includes(code) ? prev.filter(c => c !== code) : prev.length < 3 ? [...prev, code] : prev);
+
+  return (
+    <div className="max-w-4xl mx-auto">
+      <div className="bg-white rounded-lg shadow-lg p-6 md:p-8">
+        <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
+          <h2 className="text-2xl font-bold text-gray-800">Create New Standard</h2>
+          <button onClick={() => setShowBank(true)} className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center gap-2">
+            <DatabaseIcon />Pull from Bank
+          </button>
+        </div>
+
+        {message && <div className="mb-6"><Notice tone={message.tone}>{message.text}</Notice></div>}
+
+        <div className="space-y-6">
+          <SchoolDeptCourse showLabels school={form.school} dept={form.department} course={form.course}
+            onSchool={(v) => { set({ school: v, department: "", course: "" }); setSelectedPOGs([]); }}
+            onDept={(v) => { set({ department: v, course: "" }); setSelectedPOGs([]); }}
+            onCourse={(v) => set({ course: v })} />
+
+          {form.course && (
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+              <strong>Standard ID (auto-generated):</strong> {standardId}
+            </div>
+          )}
+
+          <div>
+            <label htmlFor="category" className="block text-sm font-medium text-gray-700 mb-2">
+              Category * <span className="text-gray-500 text-xs">({form.category.length}/30 characters)</span>
+            </label>
+            <input id="category" type="text" value={form.category} maxLength={30} onChange={(e) => set({ category: e.target.value })}
+              placeholder="e.g., Linear Equations" className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+          </div>
+
+          <div>
+            <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-2">
+              Description * <span className={`text-xs ${words > 25 ? "text-orange-600" : "text-gray-500"}`}>({words} words, target about 20)</span>
+            </label>
+            <textarea id="description" value={form.description} rows={4} placeholder="Students will..."
+              onChange={(e) => { set({ description: e.target.value }); setAnalysis(null); }}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+            <p className="text-xs text-gray-500 mt-1">Must start with “Students will...”</p>
+          </div>
+
+          <div>
+            <button onClick={analyze} disabled={analyzing || !form.description.trim()}
+              className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center gap-2">
+              <SparklesIcon className="w-5 h-5" />{analyzing ? "Analyzing..." : "Analyze Standard with AI"}
+            </button>
+          </div>
+
+          {analysis && <RigorAnalysisPanel analysis={analysis} />}
+
+          {deptStandards.length > 0 && (
+            <fieldset>
+              <legend className="block text-sm font-medium text-gray-700 mb-3">
+                Aligns to Department Portrait * <span className="text-gray-500 text-xs">(Select 1-3)</span>
+              </legend>
+              <div className="space-y-2 max-h-72 overflow-y-auto p-4 bg-gray-50 rounded-lg border border-gray-200">
+                {deptStandards.map(std => {
+                  const checked = selectedPOGs.includes(std.code);
+                  return (
+                    <label key={std.code} className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors ${checked ? "bg-purple-100 border-2 border-purple-500" : "bg-white border-2 border-transparent hover:bg-gray-50"}`}>
+                      <input type="checkbox" checked={checked} onChange={() => togglePOG(std.code)}
+                        disabled={!checked && selectedPOGs.length >= 3} className="mt-1" />
+                      <div className="flex-1">
+                        <div className="font-semibold text-gray-800">{std.code}</div>
+                        <div className="text-sm text-gray-600">{std.description}</div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-gray-500 mt-2">{selectedPOGs.length}/3 selected</p>
+            </fieldset>
+          )}
+
+          <div className="flex flex-col sm:flex-row gap-4 pt-4 border-t">
+            <button onClick={() => save(false)} className="flex-1 px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-semibold">Save as Draft</button>
+            <button onClick={() => save(true)} className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold">Submit for Approval</button>
+          </div>
+        </div>
+      </div>
+
+      {showBank && <BankModal onClose={() => setShowBank(false)}
+        onPick={(text) => { set({ description: text }); setAnalysis(null); setShowBank(false); }} />}
+    </div>
+  );
+};
+
+/* =====================================================================
+   COURSE OUTLINES (next build)
+   ===================================================================== */
+const OutlineView = () => (
+  <div className="bg-white rounded-lg shadow-md p-6">
+    <h2 className="text-2xl font-bold text-gray-800 mb-4">Course Outline Builder</h2>
+    <p className="text-gray-600">The Course Outline interface will be built in the next iteration.</p>
+  </div>
+);
+
+/* =====================================================================
+   PAGE FRAME
+   ===================================================================== */
+const ROLES = [
+  { key: "teacher", label: "Teacher" },
+  { key: "chair", label: "Department Chair" },
+  { key: "principal", label: "Principal" },
+  { key: "superadmin", label: "SuperAdmin" }
+];
+const ROLE_LABEL = Object.fromEntries(ROLES.map(r => [r.key, r.label]));
+
+const Header = ({ currentUser, userRole }) => (
+  <header className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white shadow-lg">
+    <div className="container mx-auto px-4 py-6 flex items-center justify-between gap-4 flex-wrap">
+      <div>
+        <h1 className="text-2xl md:text-3xl font-bold">Westminster Standards Platform</h1>
+        <p className="text-blue-100 mt-1">Building academic excellence through clear, rigorous standards</p>
+        <p className="text-blue-200 text-sm mt-1">Phase 1 Prototype – For Review and Feedback</p>
+      </div>
+      <div className="flex items-center gap-2">
+        <UsersIcon className="w-5 h-5" />
+        <div className="text-right">
+          <div className="text-sm font-medium">{currentUser}</div>
+          <div className="text-xs text-blue-200">{ROLE_LABEL[userRole]}</div>
+        </div>
+      </div>
+    </div>
+  </header>
+);
+
+const RoleBar = ({ userRole, setUserRole }) => (
+  <div className="bg-yellow-50 border-b border-yellow-200">
+    <div className="container mx-auto px-4 py-2 flex items-center gap-4 text-sm flex-wrap">
+      <span className="text-yellow-800 font-medium">Demo mode. Select a role:</span>
+      {ROLES.map(r => (
+        <label key={r.key} className="flex items-center gap-2">
+          <input type="radio" name="role" checked={userRole === r.key} onChange={() => setUserRole(r.key)} />{r.label}
+        </label>
+      ))}
+      <span className="text-yellow-700 text-xs">Sample data. Changes reset when you reload.</span>
+    </div>
+  </div>
+);
+
+const TABS = [
+  { key: "browse", label: "Browse Standards", Icon: BookOpen },
+  { key: "create", label: "Create Standard", Icon: PlusIcon },
+  { key: "outline", label: "Course Outlines", Icon: TargetIcon }
+];
+
+const NavTabs = ({ view, setView }) => (
+  <nav className="bg-white shadow-md">
+    <div className="container mx-auto px-4 flex gap-6 overflow-x-auto">
+      {TABS.map(({ key, label, Icon }) => (
+        <button key={key} onClick={() => setView(key)} aria-current={view === key ? "page" : undefined}
+          className={`py-4 px-2 border-b-2 font-medium transition-colors flex items-center gap-2 whitespace-nowrap ${view === key ? "border-blue-600 text-blue-600" : "border-transparent text-gray-600 hover:text-gray-800"}`}>
+          <Icon />{label}
+        </button>
+      ))}
+    </div>
+  </nav>
+);
+
+const App = () => {
+  const [view, setView] = useState("browse");
+  const [userRole, setUserRole] = useState("teacher");
+  const [standards, setStandards] = useState(SAMPLE_STANDARDS);
+  const [flash, setFlash] = useState("");
+  const currentUser = DEMO_USER;
+
+  const updateStandard = (course, id, change) => setStandards(prev => ({
+    ...prev,
+    [course]: change === null ? prev[course].filter(s => s.id !== id) : prev[course].map(s => s.id === id ? { ...s, ...change } : s)
+  }));
+  const approve = (course, id) => { updateStandard(course, id, { status: "approved" }); setFlash(`${id} was approved.`); };
+  const reject = (course, id) => { updateStandard(course, id, null); setFlash(`${id} was rejected and your comments were sent to its author (in the full version, by email).`); };
+  const addStandard = (course, standard) => setStandards(prev => ({ ...prev, [course]: [...(prev[course] || []), standard] }));
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <Header currentUser={currentUser} userRole={userRole} />
+      <RoleBar userRole={userRole} setUserRole={setUserRole} />
+      <NavTabs view={view} setView={(v) => { setView(v); setFlash(""); }} />
+      <main className="container mx-auto px-4 py-8">
+        {view === "browse" && <BrowseView standards={standards} userRole={userRole} currentUser={currentUser}
+          onApprove={approve} onReject={reject} flash={flash} />}
+        {view === "create" && <CreateStandardView standards={standards} currentUser={currentUser} onSave={addStandard} />}
+        {view === "outline" && <OutlineView />}
+      </main>
+    </div>
+  );
+};
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
