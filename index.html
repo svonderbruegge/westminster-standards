@@ -10,6 +10,16 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
 <style>
   body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .print-only { display: none; }
+  @media print {
+    .no-print { display: none !important; }
+    .print-only { display: block !important; }
+    body { background: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .print-break { break-before: page; }
+    .avoid-break { break-inside: avoid; }
+    main { padding: 0 !important; }
+    .container { max-width: 100% !important; }
+  }
   button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
 </style>
 </head>
@@ -33,34 +43,252 @@ const DEMO_CHAIR_DEPARTMENT = "Mathematics";
 /* =====================================================================
    DATA
    ===================================================================== */
-const COURSE_DATA = {
-  "Middle School": {
-    "Bible": ["Essentials of the Christian Faith: Old Testament (7)", "Biblical Worldview (8)"],
-    "Business & Communications": ["Intro to Business"],
-    "English": ["Foundations of Writing and Literature 7", "Foundations of Writing and Literature 7 (Honors)", "Foundations of Writing and Literature 8", "Foundations of Writing and Literature 8 (Honors)"],
-    "History & Social Studies": ["Global Studies 7", "American History 8"],
-    "Mathematics": ["Math 7", "Pre-Algebra (Fundamentals)", "Pre-Algebra", "Algebra 1", "Algebra 1 (Honors)", "Math 8", "Algebra 2"],
-    "Science": ["Life Science 7", "Physical Science 8"],
-    "Fine Arts": ["Art 7 & 8", "Band 7 & 8", "Chorus 7 & 8", "Orchestra 7 & 8", "Musical Theatre 7 & 8", "Theatre Arts 7 & 8"],
-    "World Languages": ["Spanish I", "French I"],
-    "Physical Education": [],
-    "STEM": ["STEM 7", "STEM 8"],
-    "Pathways": ["Study Lab 7 and 8", "Foundations of Writing and Literature 7 and 8", "English Skills 7 and 8"]
-  },
-  "Upper School": {
-    "Bible": ["New Testament", "Christian Ethics", "Church History", "Spiritual Disciplines & Leadership", "Worldviews"],
-    "Business & Communications": ["Introduction to Business", "Principles of Economics", "Finance and Accounting", "Marketing 1", "Entrepreneurship: Marketing", "Entrepreneurship: Pawprint Coffee", "Feature Journalism – Yearbook 1", "Feature Journalism – Yearbook 2", "News Journalism 1 – 800 News", "News Journalism 2 – 800 News", "Multimedia / Video Storytelling", "Advanced Video Storytelling"],
-    "English": ["Freshman Expository Writing", "Freshman Expository Writing (Honors)", "Literature of Western Civilization", "Literature of Western Civilization (Honors)", "American Literature", "American Literature (Honors)", "Advanced Expository Writing", "Language & Composition (AP)", "Literature & Composition (AP)", "Speech Communication", "ESL Intermediate Reading and Writing", "ESL Advanced Reading and Writing"],
-    "History & Social Studies": ["Western Civilization (Honors)", "Advanced U.S. History (AP)", "Advanced U.S. Government (AP)", "American Government"],
-    "Mathematics": ["Geometry (Honors)", "Algebra 2 (Honors)", "Pre-Calculus", "Pre-Calculus (Honors)", "Precalculus with Calculus AB (AP)", "Calculus AB (AP)", "Calculus BC (AP)", "Multivariable 3-D Calculus", "Statistics", "Statistics (AP)"],
-    "Science": ["Biology", "Chemistry", "Physics 9 (Honors)", "Physics 1 & 2 (AP)", "Psychology", "Human Anatomy and Physiology"],
-    "Fine Arts": ["Introduction to Visual Art", "Ceramics 1", "Ceramics 2", "Digital Photography", "Drawing", "3-D Design", "Graphic Design", "Oil Painting", "Watercolor Painting", "Printmaking", "Advanced Studio Art", "AP Studio Art", "AP Art History", "Band", "Orchestra", "Chamber Choir", "Concert Choir", "Men's Chorus", "Women's Chorus", "Jazz Band", "Music Composition", "Music Theory (AP)", "Theatre Arts: Improvisation", "Theatre Arts: Production and Design", "Theatre Arts: Scripts and Styles", "Theatre Arts: Advanced Theatre Arts"],
-    "World Languages": ["Spanish 2", "Spanish 3", "Spanish 3 (Honors)", "Spanish 4", "French 3", "French 3 (Honors)", "French 4", "French 4 (AP)", "French 5", "Advanced Spanish 5"],
-    "Physical Education": ["Health & Fitness", "Female Fitness", "Male Fitness", "Strength & Conditioning", "Advanced Strength & Conditioning"],
-    "STEM": ["Principles of Engineering", "Computer Assisted Design (CAD)", "Introduction to Computer Programming", "Advanced Computer Programming with C++", "Healthcare Exploration", "Robotics"],
-    "Pathways": ["Study Lab 9-12", "Freshman Expository Writing CWC", "Western Civilization CWC", "American Literature CWC", "Advanced Expository Writing CWC", "English Skills 9-12"]
-  }
+/* =====================================================================
+   COURSES
+   Upper School follows the 2026-27 registration forms (grades 9-12).
+   Middle School has no registration forms yet, so its grades are "not set".
+   Upper School courses that are NOT on the forms are kept but flagged
+   (verified: false) until someone confirms them.
+   core = the grade where a course is the typical placement (used for
+   same-grade comparisons). Electives open to many grades have no core grade.
+   family + level = versions of one course (Fundamentals / Traditional / Honors).
+   ===================================================================== */
+const MS = "Middle School";
+const US = "Upper School";
+const SCHOOLS = [MS, US];
+const DEPT_ORDER = ["Bible", "Business & Communications", "English", "History & Social Studies", "Mathematics", "Science", "Fine Arts", "World Languages", "Physical Education", "STEM", "Pathways"];
+const LEVEL_SUFFIX = { Fundamentals: " (Fundamentals)", Traditional: "", Honors: " (Honors)", AP: " (AP)" };
+const LEVEL_ORDER = ["CWC", "Fundamentals", "Traditional", "Honors", "AP"];
+const ALL_GRADES = [9, 10, 11, 12];
+const COURSES = [];
+
+function addCourse(school, department, name, o) {
+  const opts = o || {};
+  COURSES.push({
+    school: school,
+    department: department,
+    name: name,
+    grades: opts.grades || [],
+    core: opts.core === undefined ? null : opts.core,
+    family: opts.family || null,
+    level: opts.level || null,
+    byLevel: !!opts.byLevel,
+    verified: opts.verified !== false
+  });
+}
+function addMiddle(department, names) {
+  names.forEach(function (n) { addCourse(MS, department, n); });
+}
+function us(department, name, grades, o) {
+  addCourse(US, department, name, Object.assign({ grades: grades }, o || {}));
+}
+function usUnverified(department, names) {
+  names.forEach(function (n) { addCourse(US, department, n, { verified: false }); });
+}
+// levels: [[levelName, grades, coreOverride?], ...]
+function fam(department, base, levels, defaultCore) {
+  levels.forEach(function (entry) {
+    addCourse(US, department, base + LEVEL_SUFFIX[entry[0]], {
+      grades: entry[1],
+      core: entry[2] === undefined ? defaultCore : entry[2],
+      family: base,
+      level: entry[0]
+    });
+  });
+}
+
+/* ---------- Middle School (grades not set) ---------- */
+addMiddle("Bible", ["Essentials of the Christian Faith: Old Testament (7)", "Biblical Worldview (8)"]);
+addMiddle("Business & Communications", ["Intro to Business"]);
+addMiddle("English", ["Foundations of Writing and Literature 7", "Foundations of Writing and Literature 7 (Honors)", "Foundations of Writing and Literature 8", "Foundations of Writing and Literature 8 (Honors)"]);
+addMiddle("History & Social Studies", ["Global Studies 7", "American History 8"]);
+addMiddle("Mathematics", ["Math 7", "Pre-Algebra (Fundamentals)", "Pre-Algebra", "Algebra 1", "Algebra 1 (Honors)", "Math 8", "Algebra 2"]);
+addMiddle("Science", ["Life Science 7", "Physical Science 8"]);
+addMiddle("Fine Arts", ["Art 7 & 8", "Band 7 & 8", "Chorus 7 & 8", "Orchestra 7 & 8", "Musical Theatre 7 & 8", "Theatre Arts 7 & 8"]);
+addMiddle("World Languages", ["Spanish I", "French I"]);
+addMiddle("STEM", ["STEM 7", "STEM 8"]);
+addMiddle("Pathways", ["Study Lab 7 and 8", "Foundations of Writing and Literature 7 and 8", "English Skills 7 and 8"]);
+
+/* ---------- Upper School: Bible ---------- */
+us("Bible", "New Testament", [9], { core: 9 });
+us("Bible", "Christian Ethics", [10, 11], { core: 10 });
+us("Bible", "Church History", [11, 12], { core: 11 });
+us("Bible", "Spiritual Disciplines & Leadership", [11, 12], { core: 11 });
+us("Bible", "Worldviews", [12], { core: 12 });
+
+/* ---------- Upper School: Business & Communications ---------- */
+us("Business & Communications", "Intro to Business", ALL_GRADES);
+us("Business & Communications", "Principles of Economics", [10, 11, 12]);
+us("Business & Communications", "Business Finance and Accounting", [10, 11, 12]);
+us("Business & Communications", "Marketing 1", [11, 12]);
+us("Business & Communications", "Entrepreneurship: Marketing", [12]);
+us("Business & Communications", "Entrepreneurship: Pawprint Coffee", [12]);
+us("Business & Communications", "Feature Journalism – Yearbook 1", ALL_GRADES);
+us("Business & Communications", "Feature Journalism – Yearbook 2", [10, 11, 12]);
+us("Business & Communications", "News Journalism 1 – 800 News", ALL_GRADES);
+us("Business & Communications", "News Journalism 2 – 800 News", [10, 11, 12]);
+us("Business & Communications", "Video Storytelling", ALL_GRADES);
+usUnverified("Business & Communications", ["Advanced Video Storytelling"]);
+
+/* ---------- Upper School: English ---------- */
+fam("English", "Expository Writing 9", [["Traditional", [9]], ["Honors", [9]]], 9);
+fam("English", "Literature of Western Civilization", [["Traditional", [10]], ["Honors", [10]]], 10);
+fam("English", "American Literature", [["Traditional", [11]], ["Honors", [11]]], 11);
+us("English", "Advanced Expository Writing", [12], { core: 12, family: "Advanced Expository Writing", level: "Traditional" });
+us("English", "Language & Composition (AP)", [12], { core: 12 });
+us("English", "Literature & Composition (AP)", [12], { core: 12 });
+us("English", "Speech Communication", [11, 12]);
+usUnverified("English", ["ESL Intermediate Reading and Writing", "ESL Advanced Reading and Writing"]);
+
+/* ---------- Upper School: History & Social Studies ---------- */
+us("History & Social Studies", "History of Global Conflicts", [9], { core: 9 });
+fam("History & Social Studies", "Western Civilization", [["Traditional", [10]], ["Honors", [10]]], 10);
+us("History & Social Studies", "U.S. History", [11], { core: 11, family: "U.S. History", level: "Traditional" });
+us("History & Social Studies", "Advanced U.S. History (AP)", [11], { core: 11, family: "U.S. History", level: "AP" });
+us("History & Social Studies", "American Government", [12], { core: 12, family: "Government", level: "Traditional" });
+us("History & Social Studies", "Advanced U.S. Government (AP)", [12], { core: 12, family: "Government", level: "AP" });
+us("History & Social Studies", "Psychology", [11, 12]);
+us("History & Social Studies", "Race and Culture", [11, 12]);
+us("History & Social Studies", "Mock Trial", ALL_GRADES);
+
+/* ---------- Upper School: Mathematics ---------- */
+fam("Mathematics", "Algebra 1", [["Fundamentals", [9]], ["Traditional", [9]]], 9);
+fam("Mathematics", "Geometry", [["Fundamentals", [9]], ["Traditional", [9]], ["Honors", [9]]], 9);
+fam("Mathematics", "Algebra 2", [["Fundamentals", [10, 11]], ["Traditional", [10, 11]], ["Honors", [10]]], 10);
+fam("Mathematics", "Pre-Calculus", [["Fundamentals", [11, 12]], ["Traditional", [11, 12]], ["Honors", [11, 12]]], 11);
+us("Mathematics", "Precalculus with Calculus AB (AP)", [11], { core: 11 });
+us("Mathematics", "Calculus AB (AP)", [11, 12], { core: 12 });
+us("Mathematics", "Calculus BC (AP)", [12], { core: 12 });
+us("Mathematics", "Multivariable 3-D Calculus", [12], { core: 12 });
+fam("Mathematics", "Statistics", [["Traditional", [12]], ["AP", [12]]], 12);
+us("Mathematics", "Applied Math (Fundamentals)", [12], { core: 12 });
+
+/* ---------- Upper School: Science ---------- */
+fam("Science", "Physics", [["Fundamentals", [9]], ["Traditional", [9]], ["Honors", [9]]], 9);
+fam("Science", "Chemistry", [["Fundamentals", [10]], ["Traditional", [10]], ["Honors", [10]], ["AP", [11, 12], null]], 10);
+fam("Science", "Biology", [["Fundamentals", [11, 12]], ["Traditional", [11, 12]], ["Honors", [11]], ["AP", [12], null]], 11);
+us("Science", "Physics 1 & 2 (AP)", [11, 12]);
+us("Science", "Psychology (AP)", [11, 12]);
+us("Science", "Environmental Science", [12]);
+us("Science", "Human Anatomy and Physiology", [12]);
+
+/* ---------- Upper School: Fine Arts ---------- */
+us("Fine Arts", "Band", ALL_GRADES);
+us("Fine Arts", "String Orchestra", ALL_GRADES);
+us("Fine Arts", "Concert Choir", ALL_GRADES);
+us("Fine Arts", "Men's Choir", ALL_GRADES);
+us("Fine Arts", "Women's Choir", ALL_GRADES);
+us("Fine Arts", "Piano Lab", ALL_GRADES);
+us("Fine Arts", "Music Composition", [10, 11, 12]);
+us("Fine Arts", "Music Theory (AP)", [11, 12]);
+us("Fine Arts", "Intro to Visual Art", ALL_GRADES);
+us("Fine Arts", "Ceramics 1", [10, 11, 12]);
+us("Fine Arts", "Ceramics 2", [11, 12]);
+us("Fine Arts", "Ceramics 3", [12]);
+us("Fine Arts", "Drawing", [10, 11, 12]);
+us("Fine Arts", "3-D Design", [10, 11, 12]);
+us("Fine Arts", "Graphic Design", [10, 11, 12]);
+us("Fine Arts", "Oil Painting", [10, 11, 12]);
+us("Fine Arts", "Photography", [10, 11, 12]);
+us("Fine Arts", "Printmaking", [10, 11, 12]);
+us("Fine Arts", "Watercolor Painting", [10, 11, 12]);
+us("Fine Arts", "Advanced Studio Art", [11, 12]);
+us("Fine Arts", "Studio Art (AP)", [11, 12]);
+us("Fine Arts", "Intro to Theatre Arts", ALL_GRADES);
+us("Fine Arts", "Theatre Arts: Production and Design", [10, 11, 12]);
+us("Fine Arts", "Theatre Arts: Scripts and Styles", [10, 11, 12]);
+us("Fine Arts", "Theatre Arts: Improvisation", [10, 11, 12]);
+us("Fine Arts", "Theatre Arts: Advanced Theatre Arts", [11, 12]);
+usUnverified("Fine Arts", ["AP Art History", "Chamber Choir", "Jazz Band"]);
+
+/* ---------- Upper School: World Languages (placed by level, not grade) ---------- */
+addCourse(US, "World Languages", "Spanish 1", { byLevel: true });
+addCourse(US, "World Languages", "Spanish 2", { byLevel: true, family: "Spanish 2", level: "Traditional" });
+addCourse(US, "World Languages", "Spanish 2 (Honors)", { byLevel: true, family: "Spanish 2", level: "Honors" });
+addCourse(US, "World Languages", "French 1", { byLevel: true });
+addCourse(US, "World Languages", "French 2", { byLevel: true });
+addCourse(US, "World Languages", "Spanish 3", { byLevel: true, verified: false, family: "Spanish 3", level: "Traditional" });
+addCourse(US, "World Languages", "Spanish 3 (Honors)", { byLevel: true, verified: false, family: "Spanish 3", level: "Honors" });
+addCourse(US, "World Languages", "Spanish 4", { byLevel: true, verified: false });
+addCourse(US, "World Languages", "Advanced Spanish 5", { byLevel: true, verified: false });
+addCourse(US, "World Languages", "French 3", { byLevel: true, verified: false, family: "French 3", level: "Traditional" });
+addCourse(US, "World Languages", "French 3 (Honors)", { byLevel: true, verified: false, family: "French 3", level: "Honors" });
+addCourse(US, "World Languages", "French 4", { byLevel: true, verified: false });
+addCourse(US, "World Languages", "French 4 (AP)", { byLevel: true, verified: false });
+addCourse(US, "World Languages", "French 5", { byLevel: true, verified: false });
+
+/* ---------- Upper School: Physical Education ---------- */
+us("Physical Education", "Health & Fitness", [9, 10], { core: 9 });
+us("Physical Education", "Strength & Conditioning", ALL_GRADES);
+us("Physical Education", "Female Fitness", ALL_GRADES);
+us("Physical Education", "Male Fitness", ALL_GRADES);
+us("Physical Education", "Advanced Strength & Conditioning", [10, 11, 12]);
+
+/* ---------- Upper School: STEM ---------- */
+us("STEM", "Healthcare Exploration", ALL_GRADES);
+us("STEM", "Intro to Computer Programming", ALL_GRADES);
+us("STEM", "Computer Assisted Design (CAD)", ALL_GRADES);
+us("STEM", "Robotics", [10, 11, 12]);
+us("STEM", "Principles of Engineering", [10, 11, 12]);
+usUnverified("STEM", ["Advanced Computer Programming with C++"]);
+
+/* ---------- Upper School: Pathways (includes Special Services Study Labs) ---------- */
+us("Pathways", "Study Lab 9", [9], { core: 9 });
+us("Pathways", "Study Lab 10", [10], { core: 10 });
+us("Pathways", "Study Lab 11", [11], { core: 11 });
+us("Pathways", "Study Lab 12", [12], { core: 12 });
+// CWC versions of the English sequence (ASSUMPTION: Western Civilization CWC = Literature of Western Civilization CWC)
+us("Pathways", "Freshman Expository Writing CWC", [9], { core: 9, family: "Expository Writing 9", level: "CWC" });
+us("Pathways", "Western Civilization CWC", [10], { core: 10, family: "Literature of Western Civilization", level: "CWC" });
+us("Pathways", "American Literature CWC", [11], { core: 11, family: "American Literature", level: "CWC" });
+us("Pathways", "Advanced Expository Writing CWC", [12], { core: 12, family: "Advanced Expository Writing", level: "CWC" });
+usUnverified("Pathways", ["English Skills 9-12"]);
+
+/* ---------- Derived lookups ---------- */
+const COURSE_DATA = {};
+SCHOOLS.forEach(function (s) {
+  COURSE_DATA[s] = {};
+  DEPT_ORDER.forEach(function (d) {
+    COURSE_DATA[s][d] = COURSES.filter(function (c) { return c.school === s && c.department === d; })
+      .map(function (c) { return c.name; });
+  });
+});
+
+const courseKey = function (school, department, course) { return school + "|" + department + "|" + course; };
+const CORE_BY_KEY = {};
+COURSES.forEach(function (c) { CORE_BY_KEY[courseKey(c.school, c.department, c.name)] = c.core; });
+
+function findCourse(school, department, name) {
+  return COURSES.find(function (c) { return c.school === school && c.department === department && c.name === name; }) || null;
+}
+
+function gradeText(c) {
+  if (!c) return "";
+  if (c.byLevel) return "Placed by language level, not by grade";
+  if (c.school === MS) return "Grade not set";
+  if (!c.verified) return "Grade not set (not on the 2026-27 registration forms)";
+  const g = c.grades;
+  if (g.length === 0) return "Grade not set";
+  if (g.length === 1) return "Grade " + g[0];
+  const consecutive = g.every(function (v, i) { return i === 0 || v === g[i - 1] + 1; });
+  return "Grades " + (consecutive ? g[0] + "–" + g[g.length - 1] : g.join(", "));
+}
+
+// Department statements line up with the Westminster statements by number.
+// English (8 statements) and Fine Arts (3 statements) don't follow that pattern,
+// so they have no automatic connection until a chair sets one.
+function westminsterCode(deptCode) {
+  const m = deptCode.match(/^([A-Z]+)-POG-(\d+)$/);
+  if (!m) return null;
+  if (m[1] === "ENG" || m[1] === "ART") return null;
+  const n = parseInt(m[2], 10);
+  return n >= 1 && n <= 7 ? "WCA-POG-" + n : null;
+}
+
+const matchesCourse = function (s, c) {
+  return s.school === c.school && s.department === c.department && s.course === c.name;
 };
+
 
 const WESTMINSTER_PORTRAIT = {
   title: "Westminster Portrait of a Graduate",
@@ -219,15 +447,15 @@ const AUTONOMY_LABELS = ["Low", "Medium", "Medium High", "High"];
 
 // Sample standards (in-memory only; nothing is saved between page loads)
 const SAMPLE_STANDARDS = [
-  { id: "ALG1-001", school: "Middle School", department: "Mathematics", course: "Algebra 1", category: "Linear Equations",
+  { id: "ALG1-001", unit: "Unit 1: Linear Equations", school: "Middle School", department: "Mathematics", course: "Algebra 1", category: "Linear Equations",
     description: "Students will solve multi-step linear equations in one variable using algebraic properties.",
     placement: { complexity: 2, autonomy: 2 }, status: "approved", submitted: true,
     createdBy: "Sarah Johnson", createdDate: "2024-01-15", alignsTo: ["MATH-POG-1", "MATH-POG-2"], assessments: ["Quiz", "Test", "Problem Set"] },
-  { id: "ALG1-002", school: "Middle School", department: "Mathematics", course: "Algebra 1", category: "Factoring",
+  { id: "ALG1-002", unit: "Unit 2: Factoring and Quadratics", school: "Middle School", department: "Mathematics", course: "Algebra 1", category: "Factoring",
     description: "Students will factor quadratic expressions and solve quadratic equations by factoring.",
     placement: { complexity: 3, autonomy: 2 }, status: "approved", submitted: true,
     createdBy: "Sarah Johnson", createdDate: "2024-01-18", alignsTo: ["MATH-POG-1", "MATH-POG-2"], assessments: ["Quiz", "Test", "Problem Set"] },
-  { id: "ALG1-003", school: "Middle School", department: "Mathematics", course: "Algebra 1", category: "Functions",
+  { id: "ALG1-003", unit: "Unit 1: Linear Equations", school: "Middle School", department: "Mathematics", course: "Algebra 1", category: "Functions",
     description: "Students will understand, graph, and interpret linear functions in real-world contexts.",
     placement: { complexity: 3, autonomy: 3 }, status: "draft", submitted: true,
     createdBy: "John Smith", createdDate: "2024-02-01", alignsTo: ["MATH-POG-1", "MATH-POG-3"], assessments: ["Test", "Performance Task"] },
@@ -247,10 +475,58 @@ const SAMPLE_STANDARDS = [
     description: "Students will analyze the process of cellular respiration and its role in energy production.",
     placement: { complexity: 2, autonomy: 2 }, status: "draft", submitted: true,
     createdBy: "Emily Davis", createdDate: "2024-02-03", alignsTo: ["SCI-POG-2", "SCI-POG-3"], assessments: ["Lab", "Written Analysis"] },
-  { id: "INTBUS-001", school: "Upper School", department: "Business & Communications", course: "Introduction to Business", category: "Entrepreneurship",
+  { id: "INTBUS-001", school: "Upper School", department: "Business & Communications", course: "Intro to Business", category: "Entrepreneurship",
     description: "Students will create organizational value through sustainable business practices.",
     placement: { complexity: 3, autonomy: 2 }, status: "approved", submitted: true,
-    createdBy: "Lisa Martinez", createdDate: "2024-01-10", alignsTo: ["BUS-POG-1", "BUS-POG-2"], assessments: ["Business Plan", "Presentation"] }
+    createdBy: "Lisa Martinez", createdDate: "2024-01-10", alignsTo: ["BUS-POG-1", "BUS-POG-2"], assessments: ["Business Plan", "Presentation"] },
+  { id: "ALG2-016", school: "Upper School", department: "Mathematics", course: "Algebra 2 (Honors)", category: "Factoring",
+    description: "Students will factor polynomial expressions using various techniques including grouping and special products.",
+    placement: { complexity: 3, autonomy: 2 }, status: "approved", submitted: true,
+    createdBy: "Sarah Johnson", createdDate: "2024-02-10", alignsTo: ["MATH-POG-1", "MATH-POG-2"], assessments: ["Quiz", "Test"] },
+  { id: "ALG2-017", school: "Upper School", department: "Mathematics", course: "Algebra 2 (Honors)", category: "Exponential Functions",
+    description: "Students will model real-world situations with exponential and logarithmic functions.",
+    placement: { complexity: 3, autonomy: 3 }, status: "approved", submitted: true,
+    createdBy: "Sarah Johnson", createdDate: "2024-02-11", alignsTo: ["MATH-POG-2", "MATH-POG-3"], assessments: ["Quiz", "Test"] },
+  { id: "ALG2-018", school: "Upper School", department: "Mathematics", course: "Algebra 2 (Honors)", category: "Complex Numbers",
+    description: "Students will perform operations with complex numbers and interpret them in the complex plane.",
+    placement: { complexity: 2, autonomy: 2 }, status: "approved", submitted: true,
+    createdBy: "Sarah Johnson", createdDate: "2024-02-12", alignsTo: ["MATH-POG-3"], assessments: ["Quiz", "Test"] },
+  { id: "ALG2-019", school: "Upper School", department: "Mathematics", course: "Algebra 2", category: "Factoring",
+    description: "Students will factor polynomial expressions using various techniques including grouping and special products.",
+    placement: { complexity: 3, autonomy: 2 }, status: "approved", submitted: true,
+    createdBy: "Michael Torres", createdDate: "2024-02-14", alignsTo: ["MATH-POG-1", "MATH-POG-2"], assessments: ["Quiz", "Test"] },
+  { id: "ALG2-020", school: "Upper School", department: "Mathematics", course: "Algebra 2", category: "Quadratic Equations",
+    description: "Students will solve quadratic equations using graphing and the quadratic formula.",
+    placement: { complexity: 2, autonomy: 2 }, status: "approved", submitted: true,
+    createdBy: "Michael Torres", createdDate: "2024-02-15", alignsTo: ["MATH-POG-2"], assessments: ["Quiz", "Test"] },
+  { id: "ALG2-021", school: "Upper School", department: "Mathematics", course: "Algebra 2 (Fundamentals)", category: "Quadratic Equations",
+    description: "Students will solve quadratic equations using graphing and the quadratic formula.",
+    placement: { complexity: 1, autonomy: 1 }, status: "approved", submitted: true,
+    createdBy: "Lisa Martinez", createdDate: "2024-02-16", alignsTo: ["MATH-POG-2"], assessments: ["Quiz", "Test"] },
+  { id: "GEO-001", school: "Upper School", department: "Mathematics", course: "Geometry (Honors)", category: "Proof",
+    description: "Students will construct and justify geometric proofs using triangle congruence criteria.",
+    placement: { complexity: 3, autonomy: 2 }, status: "approved", submitted: true,
+    createdBy: "Michael Torres", createdDate: "2024-02-05", alignsTo: ["MATH-POG-2", "MATH-POG-4"], assessments: ["Quiz", "Test"] },
+  { id: "PHY-001", school: "Upper School", department: "Science", course: "Physics", category: "Newton's Laws",
+    description: "Students will use Newton's laws to predict and explain the motion of objects.",
+    placement: { complexity: 2, autonomy: 2 }, status: "approved", submitted: true,
+    createdBy: "Mike Chen", createdDate: "2024-02-06", alignsTo: ["SCI-POG-3", "SCI-POG-4"], assessments: ["Lab Report", "Test"] },
+  { id: "WESCIV-001", school: "Upper School", department: "History & Social Studies", course: "Western Civilization (Honors)", category: "Classical Foundations",
+    description: "Students will analyze how ideas from Greece and Rome shaped later Western institutions and beliefs.",
+    placement: { complexity: 2, autonomy: 2 }, status: "approved", submitted: true,
+    createdBy: "David Park", createdDate: "2024-02-07", alignsTo: ["HIS-POG-3", "HIS-POG-4"], assessments: ["Essay", "Test"] },
+  { id: "WESCIV-002", school: "Upper School", department: "History & Social Studies", course: "Western Civilization", category: "Classical Foundations",
+    description: "Students will analyze how ideas from Greece and Rome shaped later Western institutions and beliefs.",
+    placement: { complexity: 2, autonomy: 1 }, status: "approved", submitted: true,
+    createdBy: "David Park", createdDate: "2024-02-08", alignsTo: ["HIS-POG-3"], assessments: ["Essay", "Test"] },
+  { id: "LITWES-001", school: "Upper School", department: "English", course: "Literature of Western Civilization (Honors)", category: "Literature and Ideas",
+    description: "Students will analyze how authors across Western literature respond to the ideas of their time.",
+    placement: { complexity: 2, autonomy: 2 }, status: "approved", submitted: true,
+    createdBy: "Anna Wright", createdDate: "2024-02-09", alignsTo: ["ENG-POG-2", "ENG-POG-4"], assessments: ["Essay", "Discussion"] },
+  { id: "LITWES-002", school: "Upper School", department: "English", course: "Literature of Western Civilization", category: "Literature and Ideas",
+    description: "Students will analyze how authors across Western literature respond to the ideas of their time.",
+    placement: { complexity: 2, autonomy: 1 }, status: "draft", submitted: true,
+    createdBy: "Anna Wright", createdDate: "2024-02-09", alignsTo: ["ENG-POG-2"], assessments: ["Essay", "Discussion"] }
 ];
 
 // Mock standard bank (sample content only; real banks come in a later phase)
@@ -801,7 +1077,7 @@ function CreateStandardView({ standards, onSave, currentUser }) {
       category: form.category.trim(), description: form.description.trim(),
       placement, status: "draft", submitted: !asDraft,
       createdBy: currentUser, createdDate: new Date().toISOString().slice(0, 10),
-      alignsTo: pogs, assessments: analysis ? analysis.assessments : []
+      alignsTo: pogs, assessments: analysis ? analysis.assessments : [], unit: ""
     });
     setNotice(asDraft
       ? "Saved as a draft: " + standardId + ". It stays in this browser tab only during the demo."
@@ -948,14 +1224,536 @@ function CreateStandardView({ standards, onSave, currentUser }) {
   );
 }
 
-function OutlineView() {
+function Note({ children }) {
+  return <p className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded px-3 py-2">{children}</p>;
+}
+
+function SectionTitle({ title, subtitle }) {
   return (
-    <div className="bg-white rounded-lg shadow-md p-6">
-      <h2 className="text-2xl font-bold text-gray-800 mb-4">Course Outlines</h2>
-      <p className="text-gray-600">Course outlines come next. They will group standards into units and export to PDF.</p>
+    <div className="mb-3">
+      <h3 className="text-xl font-bold text-gray-800">{title}</h3>
+      {subtitle && <p className="text-sm text-gray-600 mt-1">{subtitle}</p>}
     </div>
   );
 }
+
+function CodeChip({ code, tone }) {
+  const cls = tone === "shared"
+    ? "bg-blue-600 text-white"
+    : tone === "dept"
+      ? "bg-purple-100 text-purple-800"
+      : "bg-gray-100 text-gray-700";
+  return <span className={"px-2 py-0.5 rounded-full text-xs font-medium " + cls}>{code}</span>;
+}
+
+function PrintPortrait({ title, tagline, statements, notice }) {
+  return (
+    <div className="avoid-break mb-4">
+      <h3 className="font-bold text-gray-900">{title}</h3>
+      <p className="text-sm italic text-gray-700 mb-2">{tagline}</p>
+      <ul className="space-y-1">
+        {statements.map(s => (
+          <li key={s.code} className="text-sm text-gray-800">
+            <span className="font-semibold italic">Now What?</span> {s.description} <span className="font-medium">({s.code})</span>
+          </li>
+        ))}
+      </ul>
+      {notice}
+    </div>
+  );
+}
+
+function OutlineStandard({ s, unitList, onAssignUnit }) {
+  const draft = s.status === "draft";
+  return (
+    <div className="avoid-break border-l-4 pl-3 py-2 bg-white"
+      style={{ borderLeftColor: draft ? "#FCD34D" : "#2563EB" }}>
+      <div className="flex items-center gap-2 flex-wrap text-sm">
+        <span className="font-semibold text-blue-600">{s.id}</span>
+        <span className="text-gray-600">{s.category}</span>
+        {draft && <span className="italic text-yellow-700 font-medium">DRAFT</span>}
+      </div>
+      <p className={"text-sm text-gray-800 " + (draft ? "italic" : "")}>{s.description}</p>
+      <div className="flex flex-wrap gap-1 mt-1">
+        {s.alignsTo.map(code => <CodeChip key={code} code={code} tone="dept" />)}
+      </div>
+      <div className="no-print mt-2 flex items-center gap-2">
+        <label className="text-xs text-gray-500" htmlFor={"unit-" + s.id}>Unit</label>
+        <select id={"unit-" + s.id} value={s.unit || ""} onChange={e => onAssignUnit(s.id, e.target.value)}
+          className="px-2 py-1 border border-gray-300 rounded text-sm">
+          <option value="">Unassigned</option>
+          {unitList.map(u => <option key={u} value={u}>{u}</option>)}
+        </select>
+      </div>
+    </div>
+  );
+}
+
+function UnitsSection({ courseStandards, unitList, onAddUnit, onAssignUnit }) {
+  const [newUnit, setNewUnit] = useState("");
+  const known = new Set(unitList);
+  const unassigned = courseStandards.filter(s => !known.has(s.unit));
+  const add = () => { onAddUnit(newUnit); setNewUnit(""); };
+
+  return (
+    <section>
+      <SectionTitle title="Units and standards"
+        subtitle="Units are named by the teachers. Add a unit, then assign each standard to one." />
+      <div className="no-print flex gap-2 mb-4 flex-wrap">
+        <input type="text" value={newUnit} onChange={e => setNewUnit(e.target.value)} aria-label="New unit name"
+          onKeyDown={e => { if (e.key === "Enter") add(); }}
+          placeholder="e.g., Unit 1: Linear Equations"
+          className="flex-1 min-w-[16rem] px-4 py-2 border border-gray-300 rounded-lg" />
+        <button onClick={add} disabled={!newUnit.trim()}
+          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed">
+          Add unit
+        </button>
+      </div>
+
+      {courseStandards.length === 0 && (
+        <Note>No standards are entered for this course yet. Use Create Standard to add them, and they will appear here.</Note>
+      )}
+
+      <div className="space-y-6">
+        {unitList.map(u => {
+          const items = courseStandards.filter(s => s.unit === u);
+          return (
+            <div key={u}>
+              <h4 className="font-semibold text-gray-800 mb-2 pb-1 border-b border-gray-300">{u}</h4>
+              {items.length === 0
+                ? <p className="text-sm text-gray-500 italic">No standards in this unit yet.</p>
+                : <div className="space-y-2">{items.map(s => <OutlineStandard key={s.id} s={s} unitList={unitList} onAssignUnit={onAssignUnit} />)}</div>}
+            </div>
+          );
+        })}
+        {unassigned.length > 0 && (
+          <div>
+            <h4 className="font-semibold text-gray-800 mb-2 pb-1 border-b border-gray-300">
+              {unitList.length === 0 ? "Standards" : "Not yet in a unit"}
+            </h4>
+            <div className="space-y-2">
+              {unassigned.map(s => <OutlineStandard key={s.id} s={s} unitList={unitList} onAssignUnit={onAssignUnit} />)}
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function VerticalSection({ portrait, courseStandards, courseName }) {
+  const statements = portrait ? portrait.standards : [];
+  const gaps = statements.filter(st => !courseStandards.some(s => s.alignsTo.includes(st.code))).length;
+  return (
+    <section>
+      <SectionTitle title="Vertical alignment"
+        subtitle={"How " + courseName + " connects up to the Department Portrait and the Westminster Portrait."} />
+      {statements.length > 0 && (
+        <p className="text-sm text-gray-700 mb-3">
+          {gaps === 0
+            ? "Every Department Portrait statement has at least one standard in this course."
+            : gaps + " of " + statements.length + " Department Portrait statements have no standard in this course yet."}
+        </p>
+      )}
+      <div className="space-y-3">
+        {statements.map(st => {
+          const wc = westminsterCode(st.code);
+          const trait = wc ? WESTMINSTER_PORTRAIT.traits.find(t => t.code === wc) : null;
+          const aligned = courseStandards.filter(s => s.alignsTo.includes(st.code));
+          return (
+            <div key={st.code} className="avoid-break border border-gray-200 rounded-lg overflow-hidden">
+              <div className="px-3 py-2 bg-blue-50 text-sm text-gray-800">
+                {trait
+                  ? <><span className="font-semibold italic text-blue-900">Westminster:</span> {trait.description} <span className="text-blue-700 font-medium">({trait.code})</span></>
+                  : <><span className="font-semibold italic text-blue-900">Westminster:</span> <span className="italic text-gray-600">connection to be set by the department chair</span></>}
+              </div>
+              <div className="px-3 py-2 bg-purple-50 text-sm text-gray-800">
+                <span className="font-semibold italic text-purple-900">Department:</span> {st.description} <span className="text-purple-700 font-medium">({st.code})</span>
+              </div>
+              <div className="px-3 py-2 bg-white text-sm">
+                {aligned.length === 0
+                  ? <span className="italic text-gray-500">No standards in this course align here yet.</span>
+                  : <ul className="space-y-1">
+                      {aligned.map(s => (
+                        <li key={s.id} className="text-gray-800">
+                          <span className="font-semibold text-blue-600">{s.id}</span> {s.description}
+                        </li>
+                      ))}
+                    </ul>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function DeptGradeSection({ course, portrait, standards }) {
+  const statements = portrait ? portrait.standards : [];
+  if (course.school !== US) {
+    return (
+      <section>
+        <SectionTitle title="Department coverage by grade" />
+        <Note>Middle School grade levels aren't set yet, so this view is available for Upper School courses only.</Note>
+      </section>
+    );
+  }
+  const deptStandards = standards.filter(s => s.school === US && s.department === course.department);
+  const count = (code, g) => deptStandards.filter(s => s.alignsTo.includes(code) && CORE_BY_KEY[courseKey(s.school, s.department, s.course)] === g).length;
+  return (
+    <section className="avoid-break">
+      <SectionTitle title="Department coverage by grade"
+        subtitle={"How many " + course.department + " standards connect to each Department Portrait statement, grade by grade."} />
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm border border-gray-300">
+          <thead>
+            <tr className="bg-gray-100">
+              <th className="text-left px-3 py-2 border-b border-gray-300">Department Portrait statement</th>
+              {ALL_GRADES.map(g => (
+                <th key={g} className={"px-3 py-2 border-b border-gray-300 text-center " + (g === course.core ? "bg-blue-100 text-blue-900" : "")}>
+                  Grade {g}{g === course.core ? " (this course)" : ""}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {statements.map(st => (
+              <tr key={st.code} className="border-b border-gray-200">
+                <td className="px-3 py-2 text-gray-800">
+                  <span className="font-medium text-purple-700">{st.code}</span>{" "}
+                  <span className="text-gray-600">{st.description.length > 70 ? st.description.slice(0, 70) + "…" : st.description}</span>
+                </td>
+                {ALL_GRADES.map(g => {
+                  const n = count(st.code, g);
+                  return (
+                    <td key={g} className={"px-3 py-2 text-center " + (g === course.core ? "bg-blue-50" : "")}>
+                      {n > 0 ? <span className="font-semibold text-gray-900">{n}</span> : <span className="text-gray-400">–</span>}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-gray-500 mt-2">
+        Counts include only courses with a typical grade (for example Algebra 2 in grade 10). Electives open to several grades and Middle School courses are not counted here.
+      </p>
+    </section>
+  );
+}
+
+function SameGradeSection({ course, courseStandards, standards }) {
+  if (course.school !== US) {
+    return (
+      <section>
+        <SectionTitle title="Horizontal alignment: same grade" />
+        <Note>Middle School grade levels aren't set yet, so this view is available for Upper School courses only.</Note>
+      </section>
+    );
+  }
+  if (!course.core) {
+    return (
+      <section>
+        <SectionTitle title="Horizontal alignment: same grade" />
+        <Note>
+          {course.byLevel
+            ? "World Language courses are placed by level, not by grade, so there is no same-grade comparison."
+            : "This course has no single typical grade (it is open to several grades or isn't on the registration forms), so there is no same-grade comparison."}
+        </Note>
+      </section>
+    );
+  }
+
+  const peers = COURSES.filter(c => c.school === US && c.core === course.core);
+  const map = {};
+  peers.forEach(c => {
+    const key = c.family ? "fam:" + c.family : "course:" + c.name;
+    if (!map[key]) map[key] = { key: key, label: c.family || c.name, depts: [], courses: [] };
+    if (!map[key].depts.includes(c.department)) map[key].depts.push(c.department);
+    map[key].courses.push(c);
+  });
+  const myKey = course.family ? "fam:" + course.family : "course:" + course.name;
+
+  const ownCodes = [];
+  courseStandards.forEach(s => s.alignsTo.forEach(code => {
+    const w = westminsterCode(code);
+    if (w && !ownCodes.includes(w)) ownCodes.push(w);
+  }));
+
+  const groups = Object.values(map).map(g => {
+    const gs = standards.filter(s => g.courses.some(c => matchesCourse(s, c)));
+    const codes = [];
+    let unmapped = 0;
+    gs.forEach(s => s.alignsTo.forEach(code => {
+      const w = westminsterCode(code);
+      if (w) { if (!codes.includes(w)) codes.push(w); } else { unmapped++; }
+    }));
+    codes.sort();
+    return Object.assign({}, g, { count: gs.length, codes: codes, unmapped: unmapped });
+  }).sort((a, b) => {
+    if (a.key === myKey) return -1;
+    if (b.key === myKey) return 1;
+    const d = DEPT_ORDER.indexOf(a.depts[0]) - DEPT_ORDER.indexOf(b.depts[0]);
+    return d !== 0 ? d : a.label.localeCompare(b.label);
+  });
+
+  const sharedWithOthers = [];
+  groups.filter(g => g.key !== myKey).forEach(g => g.codes.forEach(code => {
+    if (ownCodes.includes(code) && !sharedWithOthers.includes(code)) sharedWithOthers.push(code);
+  }));
+  sharedWithOthers.sort();
+
+  return (
+    <section>
+      <SectionTitle title={"Horizontal alignment: grade " + course.core + " across departments"}
+        subtitle={"Courses that are the typical placement for grade " + course.core + ", and the Westminster Portrait statements their standards connect to."} />
+      <p className="text-sm text-gray-700 mb-3">
+        {ownCodes.length === 0
+          ? "This course has no standards connected to a Westminster statement yet."
+          : sharedWithOthers.length === 0
+            ? "No other grade " + course.core + " course shares a Westminster statement with this course yet."
+            : "This course shares " + sharedWithOthers.length + " Westminster statement" + (sharedWithOthers.length !== 1 ? "s" : "") + " with other grade " + course.core + " courses: " + sharedWithOthers.join(", ") + "."}
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm border border-gray-300">
+          <thead>
+            <tr className="bg-gray-100 text-left">
+              <th className="px-3 py-2 border-b border-gray-300">Course</th>
+              <th className="px-3 py-2 border-b border-gray-300">Department</th>
+              <th className="px-3 py-2 border-b border-gray-300 text-center">Standards</th>
+              <th className="px-3 py-2 border-b border-gray-300">Westminster statements touched</th>
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map(g => {
+              const mine = g.key === myKey;
+              return (
+                <tr key={g.key} className={"border-b border-gray-200 avoid-break " + (mine ? "bg-blue-50" : "")}>
+                  <td className="px-3 py-2 text-gray-800">
+                    <span className={mine ? "font-semibold" : ""}>{g.label}</span>
+                    {mine && <span className="text-xs text-blue-700 ml-2">(this course)</span>}
+                  </td>
+                  <td className="px-3 py-2 text-gray-600">{g.depts.join(" / ")}</td>
+                  <td className="px-3 py-2 text-center">{g.count}</td>
+                  <td className="px-3 py-2">
+                    {g.count === 0
+                      ? <span className="italic text-gray-400">No standards entered yet</span>
+                      : <div className="flex flex-wrap gap-1 items-center">
+                          {g.codes.map(code => <CodeChip key={code} code={code} tone={!mine && ownCodes.includes(code) ? "shared" : "plain"} />)}
+                          {g.unmapped > 0 && <span className="text-xs italic text-gray-500">+ {g.unmapped} awaiting a Westminster connection</span>}
+                        </div>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-gray-500 mt-2">
+        Blue chips are Westminster statements that this course also connects to. Department statements are matched to Westminster statements by number; English and Fine Arts need a connection set by their chairs first.
+      </p>
+    </section>
+  );
+}
+
+function LevelsSection({ course, standards }) {
+  const siblings = course.family
+    ? COURSES.filter(c => c.school === course.school && c.family === course.family)
+        .sort((a, b) => LEVEL_ORDER.indexOf(a.level) - LEVEL_ORDER.indexOf(b.level))
+    : [];
+  if (siblings.length < 2) {
+    return (
+      <section>
+        <SectionTitle title="Horizontal alignment: levels of this course" />
+        <Note>This course doesn't have other levels (such as Fundamentals, Traditional, or Honors) in the course list.</Note>
+      </section>
+    );
+  }
+  const perLevel = siblings.map(c => standards.filter(s => matchesCourse(s, c)));
+  const rows = [];
+  perLevel.forEach((list, idx) => {
+    list.forEach(s => {
+      let row = rows.find(r => r.description === s.description);
+      if (!row) {
+        row = { description: s.description, category: s.category, present: {} };
+        rows.push(row);
+      }
+      row.present[idx] = s;
+    });
+  });
+  rows.sort((a, b) => Object.keys(b.present).length - Object.keys(a.present).length);
+
+  return (
+    <section className="avoid-break">
+      <SectionTitle title={"Horizontal alignment: levels of " + course.family}
+        subtitle="Which standards each level teaches. A dash means that level leaves the standard out." />
+      {rows.length === 0 ? (
+        <Note>No standards are entered for any level of this course yet.</Note>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm border border-gray-300">
+            <thead>
+              <tr className="bg-gray-100">
+                <th className="text-left px-3 py-2 border-b border-gray-300">Standard</th>
+                {siblings.map(c => (
+                  <th key={c.name} className={"px-3 py-2 border-b border-gray-300 text-center " + (c.name === course.name ? "bg-blue-100 text-blue-900" : "")}>
+                    {c.level}{c.department !== course.department ? " (" + c.department + ")" : ""}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i} className="border-b border-gray-200 avoid-break">
+                  <td className="px-3 py-2 text-gray-800">
+                    <span className="text-gray-500">{r.category}: </span>{r.description}
+                  </td>
+                  {siblings.map((c, idx) => {
+                    const s = r.present[idx];
+                    return (
+                      <td key={c.name} className={"px-3 py-2 text-center " + (c.name === course.name ? "bg-blue-50" : "")}>
+                        {s
+                          ? <span className="font-semibold text-gray-900">{s.status === "draft" ? "draft" : "✓"}</span>
+                          : <span className="text-gray-400">–</span>}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+              <tr className="bg-gray-50">
+                <td className="px-3 py-2 font-medium text-gray-700">Standards taught</td>
+                {perLevel.map((list, idx) => (
+                  <td key={idx} className="px-3 py-2 text-center font-medium text-gray-700">{list.length}</td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="text-xs text-gray-500 mt-2">
+        Standards are matched when their wording is identical. In the full version the levels will choose from one shared bank, so the match will be exact.
+      </p>
+    </section>
+  );
+}
+
+function OutlineReport({ course, portrait, standards, unitList, onAddUnit, onAssignUnit }) {
+  const courseStandards = standards.filter(s => matchesCourse(s, course));
+  const today = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+
+  return (
+    <div className="space-y-8">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <p className="print-only text-sm text-gray-600">Westminster Christian Academy · Course Outline</p>
+          <h2 className="text-3xl font-bold text-gray-900">{course.name}</h2>
+          <p className="text-gray-700 mt-1">{course.school}, {course.department}</p>
+          <p className="text-sm text-gray-600">
+            {gradeText(course)}
+            {course.family && course.level ? ". Level: " + course.level : ""}
+          </p>
+          <p className="print-only text-xs text-gray-500 mt-1">Printed {today}</p>
+        </div>
+        <div className="no-print text-right">
+          <button onClick={() => window.print()}
+            className="px-5 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold">
+            Export to PDF
+          </button>
+          <p className="text-xs text-gray-500 mt-2 max-w-xs">
+            In the print window, set the destination to “Save as PDF”.
+          </p>
+        </div>
+      </div>
+
+      <div className="print-only">
+        <PrintPortrait title={WESTMINSTER_PORTRAIT.title} tagline={WESTMINSTER_PORTRAIT.tagline} statements={WESTMINSTER_PORTRAIT.traits} />
+        {portrait && (
+          <PrintPortrait title={portrait.title} tagline={portrait.tagline} statements={portrait.standards}
+            notice={<PortraitNotice portrait={portrait} />} />
+        )}
+      </div>
+
+      <UnitsSection courseStandards={courseStandards} unitList={unitList} onAddUnit={onAddUnit} onAssignUnit={onAssignUnit} />
+
+      <div className="print-break space-y-8">
+        <VerticalSection portrait={portrait} courseStandards={courseStandards} courseName={course.name} />
+        <DeptGradeSection course={course} portrait={portrait} standards={standards} />
+        <SameGradeSection course={course} courseStandards={courseStandards} standards={standards} />
+        <LevelsSection course={course} standards={standards} />
+      </div>
+    </div>
+  );
+}
+
+function OutlineView({ standards, units, onAddUnit, onAssignUnit }) {
+  const [school, setSchool] = useState("");
+  const [department, setDepartment] = useState("");
+  const [courseName, setCourseName] = useState("");
+  const [showWestminster, setShowWestminster] = useState(false);
+  const [showDepartment, setShowDepartment] = useState(false);
+
+  const courses = (school && department && COURSE_DATA[school][department]) || [];
+  const course = findCourse(school, department, courseName);
+  const portrait = DEPARTMENT_PORTRAITS[department];
+  const key = course ? courseKey(course.school, course.department, course.name) : "";
+
+  return (
+    <div className="space-y-6">
+      <div className="no-print space-y-6">
+        <p className="text-sm text-gray-500">
+          Choose a school and department, then a course. The outline groups the course's standards into units and shows how they line up with the portraits and with other courses.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <select value={school} aria-label="School"
+            onChange={e => { setSchool(e.target.value); setDepartment(""); setCourseName(""); }}
+            className="px-4 py-2 border border-gray-300 rounded-lg">
+            <option value="">Select School</option>
+            {SCHOOLS.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <select value={department} aria-label="Department" disabled={!school}
+            onChange={e => { setDepartment(e.target.value); setCourseName(""); setShowDepartment(false); }}
+            className="px-4 py-2 border border-gray-300 rounded-lg disabled:bg-gray-100">
+            <option value="">Select Department</option>
+            {school && Object.keys(COURSE_DATA[school]).map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </div>
+
+        {department && (
+          <div className="space-y-4">
+            <PortraitBox tone="blue" icon="award" title={WESTMINSTER_PORTRAIT.title} tagline={WESTMINSTER_PORTRAIT.tagline}
+              statements={WESTMINSTER_PORTRAIT.traits} open={showWestminster} onToggle={() => setShowWestminster(!showWestminster)} />
+            {portrait && (
+              <PortraitBox tone="purple" icon="target" title={portrait.title} tagline={portrait.tagline}
+                statements={portrait.standards} open={showDepartment} onToggle={() => setShowDepartment(!showDepartment)}
+                notice={<PortraitNotice portrait={portrait} />} />
+            )}
+            <select value={courseName} aria-label="Course" disabled={courses.length === 0}
+              onChange={e => setCourseName(e.target.value)}
+              className="w-full md:w-1/2 px-4 py-2 border border-gray-300 rounded-lg disabled:bg-gray-100">
+              <option value="">{courses.length === 0 ? "No courses listed" : "Select Course"}</option>
+              {courses.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+        )}
+
+        {!course && (
+          <div className="text-center py-12 text-gray-500">
+            <Icon name="target" className="w-12 h-12 mx-auto mb-3 text-gray-400" />
+            <p className="font-medium">Select a course to see its outline.</p>
+          </div>
+        )}
+      </div>
+
+      {course && (
+        <OutlineReport key={key} course={course} portrait={portrait} standards={standards}
+          unitList={units[key] || []} onAddUnit={(name) => onAddUnit(key, name)} onAssignUnit={onAssignUnit} />
+      )}
+    </div>
+  );
+}
+
 
 /* =====================================================================
    APP
@@ -974,6 +1772,9 @@ function App() {
   const [view, setView] = useState("browse");
   const [userRole, setUserRole] = useState("teacher");
   const [standards, setStandards] = useState(SAMPLE_STANDARDS);
+  const [units, setUnits] = useState({
+    [courseKey("Middle School", "Mathematics", "Algebra 1")]: ["Unit 1: Linear Equations", "Unit 2: Factoring and Quadratics"]
+  });
 
   // Browse state lives here so it survives switching tabs
   const [school, setSchool] = useState("");
@@ -983,6 +1784,16 @@ function App() {
   const [statusFilter, setStatusFilter] = useState("all");
 
   const addStandard = (s) => setStandards(prev => [...prev, s]);
+  const addUnit = (key, name) => {
+    const n = name.trim();
+    if (!n) return;
+    setUnits(prev => {
+      const current = prev[key] || [];
+      if (current.includes(n)) return prev;
+      return Object.assign({}, prev, { [key]: current.concat([n]) });
+    });
+  };
+  const assignUnit = (id, unit) => setStandards(prev => prev.map(s => s.id === id ? Object.assign({}, s, { unit: unit }) : s));
   const approve = (id) => setStandards(prev => prev.map(s => s.id === id ? { ...s, status: "approved" } : s));
   const reject = (id, comment) => {
     console.log("Rejected", id, "with comment:", comment);
@@ -998,7 +1809,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white shadow-lg">
+      <header className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white shadow-lg no-print">
         <div className="container mx-auto px-4 py-6">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div>
@@ -1017,7 +1828,7 @@ function App() {
         </div>
       </header>
 
-      <div className="bg-yellow-50 border-b border-yellow-200">
+      <div className="bg-yellow-50 border-b border-yellow-200 no-print">
         <div className="container mx-auto px-4 py-2">
           <div className="flex items-center gap-x-4 gap-y-1 text-sm flex-wrap">
             <span className="text-yellow-800 font-medium">Demo mode, choose a role:</span>
@@ -1031,7 +1842,7 @@ function App() {
         </div>
       </div>
 
-      <nav className="bg-white shadow-md">
+      <nav className="bg-white shadow-md no-print">
         <div className="container mx-auto px-4">
           <div className="flex space-x-8 overflow-x-auto">
             <NavButton active={view === "browse"} onClick={() => setView("browse")} icon="book">Browse Standards</NavButton>
@@ -1050,7 +1861,7 @@ function App() {
             statusFilter={statusFilter} setStatusFilter={setStatusFilter} />
         )}
         {view === "create" && <CreateStandardView standards={standards} onSave={addStandard} currentUser={DEMO_USER} />}
-        {view === "outline" && <OutlineView />}
+        {view === "outline" && <OutlineView standards={standards} units={units} onAddUnit={addUnit} onAssignUnit={assignUnit} />}
       </main>
     </div>
   );
