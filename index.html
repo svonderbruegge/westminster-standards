@@ -8,6 +8,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+<script src="standards-bank.js"></script>
 <style>
   body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
   .print-only { display: none; }
@@ -529,18 +530,6 @@ const SAMPLE_STANDARDS = [
     createdBy: "Anna Wright", createdDate: "2024-02-09", alignsTo: ["ENG-POG-2"], assessments: ["Essay", "Discussion"] }
 ];
 
-// Mock standard bank (sample content only; real banks come in a later phase)
-const BANK_ITEMS = [
-  { source: "Honors bank", departments: ["Mathematics"], ref: "Algebra 1 (Honors)", text: "Students will factor quadratic expressions and solve quadratic equations by factoring." },
-  { source: "Honors bank", departments: ["Mathematics"], ref: "Algebra 2 (Honors)", text: "Students will model real-world situations with exponential and logarithmic functions." },
-  { source: "Honors bank", departments: ["English"], ref: "American Literature (Honors)", text: "Students will analyze how an author's choices shape meaning across a full-length text." },
-  { source: "Common Core", departments: ["Mathematics"], ref: "CCSS.MATH.CONTENT.HSA.REI.A.1", text: "Students will explain each step in solving a simple equation as following from the equality of numbers asserted at the previous step." },
-  { source: "Common Core", departments: ["Mathematics"], ref: "CCSS.MATH.CONTENT.HSA.SSE.A.2", text: "Students will use the structure of an expression to identify ways to rewrite it." },
-  { source: "Common Core", departments: ["English"], ref: "CCSS.ELA-LITERACY.W.9-10.1", text: "Students will write arguments to support claims using valid reasoning and relevant evidence." },
-  { source: "Missouri Learning Standards", departments: ["Mathematics"], ref: "MO.A1.A.REI.1 (sample)", text: "Students will understand solving equations as a process of reasoning and explain the reasoning." },
-  { source: "Missouri Learning Standards", departments: ["Science"], ref: "MO.LS1 (sample)", text: "Students will construct an explanation of how cell structures carry out the functions of life." }
-];
-
 /* =====================================================================
    HELPERS
    ===================================================================== */
@@ -953,16 +942,62 @@ function BrowseView({
 /* =====================================================================
    PULL FROM BANK (mock)
    ===================================================================== */
-function BankModal({ department, onPick, onClose }) {
+function BankModal({ school, department, course, standards, onPick, onClose }) {
+  const bank = window.STANDARDS_BANK || null;
+  const [tab, setTab] = useState("honors");
   const [query, setQuery] = useState("");
-  const [source, setSource] = useState("All");
-  const sources = ["All", "Honors bank", "Common Core", "Missouri Learning Standards"];
   const q = query.trim().toLowerCase();
-  const items = BANK_ITEMS.filter(i =>
-    (!department || i.departments.includes(department)) &&
-    (source === "All" || i.source === source) &&
-    (!q || i.text.toLowerCase().includes(q) || i.ref.toLowerCase().includes(q))
-  );
+  const words = q.split(/\s+/).filter(Boolean);
+
+  const courseObj = findCourse(school, department, course);
+  const own = courseObj ? standards.filter(s => matchesCourse(s, courseObj)) : [];
+
+  // Honors bank: standards written for the Honors level of this course family
+  let honorsItems = [];
+  let honorsNote = "";
+  if (!courseObj) {
+    honorsNote = "Choose a school, department, and course first.";
+  } else if (!courseObj.family) {
+    honorsNote = "This course isn't part of a family with an Honors level, so there is no Honors bank for it.";
+  } else if (courseObj.level === "Honors") {
+    honorsNote = "This is the Honors level. Honors standards are written first, and the other levels choose from them.";
+  } else {
+    const honors = COURSES.filter(c => c.school === courseObj.school && c.family === courseObj.family && c.level === "Honors");
+    if (honors.length === 0) {
+      honorsNote = "This course family has no Honors level, so there is no Honors bank for it.";
+    } else {
+      honors.forEach(h => {
+        standards.filter(s => matchesCourse(s, h)).forEach(s => {
+          const already = own.some(o => o.description === s.description);
+          honorsItems.push({ source: "honors", code: s.id, ref: h.name + ", " + s.id, text: s.description, category: s.category, already: already });
+        });
+      });
+      if (honorsItems.length === 0) honorsNote = "No standards have been written for the Honors level yet.";
+    }
+  }
+  const honorsShown = honorsItems.filter(i => words.every(w => i.text.toLowerCase().includes(w) || i.category.toLowerCase().includes(w)));
+
+  // Common Core / Missouri snapshot
+  const isCluster = (code) => /\.[A-Z]$/.test(code);
+  const srcKey = tab === "cc" ? "CC" : "MO";
+  let stateItems = [];
+  let stateNote = "";
+  if (tab !== "honors") {
+    if (!bank) stateNote = "The standards file (standards-bank.js) didn't load. Make sure it is uploaded next to index.html.";
+    else if (department !== bank.department) stateNote = "Common Core and Missouri standards are loaded for Mathematics so far. Other subjects will be added.";
+    else if (words.length === 0) stateNote = "Search by topic or code, for example “factor”, “quadratic”, “HSA-REI”, or “A2.APR”.";
+    else {
+      stateItems = bank.rows
+        .filter(r => r[0] === srcKey && !isCluster(r[1]))
+        .filter(r => words.every(w => r[3].toLowerCase().includes(w) || r[1].toLowerCase().includes(w)))
+        .map(r => ({ source: srcKey === "CC" ? "Common Core" : "Missouri Learning Standards", code: r[1], ref: r[1], text: r[3] }));
+      if (stateItems.length === 0) stateNote = "No standards match that search.";
+    }
+  }
+  const shownState = stateItems.slice(0, 40);
+
+  const tabs = [["honors", "Honors bank"], ["cc", "Common Core"], ["mo", "Missouri Learning Standards"]];
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg max-w-3xl w-full max-h-[85vh] overflow-hidden flex flex-col" role="dialog" aria-label="Standard bank">
@@ -971,25 +1006,40 @@ function BankModal({ department, onPick, onClose }) {
           <button onClick={onClose} aria-label="Close" className="text-gray-500 hover:text-gray-700 text-2xl leading-none">×</button>
         </div>
         <div className="p-6 space-y-4 overflow-y-auto flex-1">
-          <div className="text-xs rounded border border-amber-300 bg-amber-50 text-amber-900 px-3 py-2">
-            Sample content only. The Honors bank, Common Core, and Missouri Learning Standards will be connected in a later phase.
-            {!department && " Choose a department first to see standards for that subject."}
+          <div className="flex flex-wrap gap-2">
+            {tabs.map(t => <FilterPill key={t[0]} active={tab === t[0]} onClick={() => setTab(t[0])}>{t[1]}</FilterPill>)}
           </div>
           <input type="text" value={query} onChange={e => setQuery(e.target.value)} aria-label="Search the bank"
             placeholder="Search the bank..." className="w-full px-4 py-2 border border-gray-300 rounded-lg" />
-          <div className="flex flex-wrap gap-2">
-            {sources.map(s => <FilterPill key={s} active={source === s} onClick={() => setSource(s)}>{s}</FilterPill>)}
-          </div>
-          {items.length === 0 && <p className="text-sm text-gray-500 py-6 text-center">No sample standards match.</p>}
-          <div className="space-y-2">
-            {items.map((i, idx) => (
-              <button key={idx} onClick={() => onPick(i.text)}
-                className="w-full text-left p-3 bg-white rounded border border-gray-200 hover:bg-blue-50 hover:border-blue-300">
-                <div className="text-xs text-gray-500 mb-1">{i.source} · {i.ref}</div>
-                <div className="text-sm text-gray-800">{i.text}</div>
-              </button>
-            ))}
-          </div>
+
+          {tab === "honors" && (
+            <div className="space-y-2">
+              {honorsNote && <p className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded px-3 py-2">{honorsNote}</p>}
+              {!honorsNote && honorsShown.length === 0 && <p className="text-sm text-gray-500 py-4 text-center">No Honors standards match.</p>}
+              {honorsShown.map((i, idx) => (
+                <button key={idx} onClick={() => onPick(i)} disabled={i.already}
+                  className="w-full text-left p-3 bg-white rounded border border-gray-200 hover:bg-blue-50 hover:border-blue-300 disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed">
+                  <div className="text-xs text-gray-500 mb-1">{i.ref}{i.already ? " (this course already has it)" : ""}</div>
+                  <div className="text-sm text-gray-800">{i.text}</div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {tab !== "honors" && (
+            <div className="space-y-2">
+              {stateNote && <p className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded px-3 py-2">{stateNote}</p>}
+              {shownState.map((i, idx) => (
+                <button key={idx} onClick={() => onPick(i)}
+                  className="w-full text-left p-3 bg-white rounded border border-gray-200 hover:bg-blue-50 hover:border-blue-300">
+                  <div className="text-xs text-gray-500 mb-1">{i.ref}</div>
+                  <div className="text-sm text-gray-800">{i.text}</div>
+                </button>
+              ))}
+              {stateItems.length > 40 && <p className="text-xs text-gray-500">Showing the first 40 of {stateItems.length}. Add another word to narrow the search.</p>}
+              {shownState.length > 0 && <p className="text-xs text-gray-500">Choosing a standard rewords it to begin with “Students will...” so you can edit it.</p>}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -1021,6 +1071,8 @@ function CreateStandardView({ standards, onSave, currentUser }) {
   const [showBank, setShowBank] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [rewording, setRewording] = useState(false);
+  const [bankRef, setBankRef] = useState("");
 
   const set = (patch) => setForm(prev => ({ ...prev, ...patch }));
   const portrait = DEPARTMENT_PORTRAITS[form.department];
@@ -1029,6 +1081,38 @@ function CreateStandardView({ standards, onSave, currentUser }) {
   const words = countWords(form.description);
   const standardId = generateStandardId(form.course, standards.map(s => s.id));
   const stale = analysis && analyzedText !== form.description;
+
+  const pickFromBank = async (item) => {
+    setShowBank(false);
+    setError(""); setNotice("");
+    if (item.source === "honors") {
+      set({ description: item.text });
+      setBankRef("Honors bank: " + item.ref);
+      return;
+    }
+    setBankRef(item.source + ": " + item.ref);
+    if (!WORKER_URL) {
+      set({ description: item.text });
+      setError("The rewording service isn't connected, so the standard was added as written. Edit it to begin with “Students will...”");
+      return;
+    }
+    setRewording(true);
+    try {
+      const res = await fetch(WORKER_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "reword", description: item.text, department: form.department, course: form.course })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Request failed");
+      set({ description: data.text });
+    } catch (e) {
+      set({ description: item.text });
+      setError("The rewording didn't work (" + e.message + "), so the standard was added as written. Edit it to begin with “Students will...”");
+    } finally {
+      setRewording(false);
+    }
+  };
 
   const togglePog = (code) => {
     if (pogs.includes(code)) setPogs(pogs.filter(c => c !== code));
@@ -1082,7 +1166,7 @@ function CreateStandardView({ standards, onSave, currentUser }) {
     setNotice(asDraft
       ? "Saved as a draft: " + standardId + ". It stays in this browser tab only during the demo."
       : "Submitted for approval: " + standardId + ". In the full version your department chair would get an email with a review link.");
-    setForm(EMPTY_FORM); setPogs([]); setAnalysis(null); setAnalyzedText("");
+    setForm(EMPTY_FORM); setPogs([]); setAnalysis(null); setAnalyzedText(""); setBankRef("");
   };
 
   return (
@@ -1145,6 +1229,8 @@ function CreateStandardView({ standards, onSave, currentUser }) {
             <textarea value={form.description} onChange={e => set({ description: e.target.value })}
               placeholder="Students will..." rows={4} className="w-full px-4 py-2 border border-gray-300 rounded-lg" />
             <p className="text-xs text-gray-500 mt-1">Must begin with “Students will...”</p>
+            {rewording && <p className="text-xs text-indigo-700 mt-1">Rewording the standard...</p>}
+            {bankRef && !rewording && <p className="text-xs text-gray-500 mt-1">Based on {bankRef}</p>}
           </FormField>
 
           <div>
@@ -1216,9 +1302,8 @@ function CreateStandardView({ standards, onSave, currentUser }) {
       </div>
 
       {showBank && (
-        <BankModal department={form.department}
-          onPick={(text) => { set({ description: text }); setShowBank(false); }}
-          onClose={() => setShowBank(false)} />
+        <BankModal school={form.school} department={form.department} course={form.course} standards={standards}
+          onPick={pickFromBank} onClose={() => setShowBank(false)} />
       )}
     </div>
   );
