@@ -9,6 +9,9 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
 <script src="standards-bank.js"></script>
+<script src="standards-bank-english.js"></script>
+<script src="standards-bank-history.js"></script>
+<script src="standards-bank-science.js"></script>
 <style>
   body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
   .print-only { display: none; }
@@ -943,9 +946,18 @@ function BrowseView({
    PULL FROM BANK (mock)
    ===================================================================== */
 function BankModal({ school, department, course, standards, onPick, onClose }) {
-  const bank = window.STANDARDS_BANK || null;
+  // Each department's snapshot is its own file: standards-bank.js (Mathematics), standards-bank-english.js,
+  // standards-bank-history.js, standards-bank-science.js. A bank can set gradeFilter: true to show only the
+  // chosen school's grades (rows with grades "7", "8", "6-8" are Middle School; the rest are Upper School).
+  const allBanks = [window.STANDARDS_BANK, window.STANDARDS_BANK_ENGLISH, window.STANDARDS_BANK_HISTORY, window.STANDARDS_BANK_SCIENCE].filter(Boolean);
+  const bank = allBanks.find(b => b.department === department) || null;
   const [tab, setTab] = useState("honors");
   const [query, setQuery] = useState("");
+  const [allGrades, setAllGrades] = useState(false);
+  const MS_GRADES = ["6", "7", "8", "6-8"];
+  const canFilterGrades = !!(bank && bank.gradeFilter) && (school === "Middle School" || school === "Upper School");
+  const gradeOk = (g) => !canFilterGrades || allGrades || (school === "Middle School" ? MS_GRADES.includes(g) : !MS_GRADES.includes(g));
+  const listNames = (names) => names.length < 2 ? names.join("") : names.slice(0, -1).join(", ") + " and " + names[names.length - 1];
   const q = query.trim().toLowerCase();
   const words = q.split(/\s+/).filter(Boolean);
 
@@ -983,12 +995,15 @@ function BankModal({ school, department, course, standards, onPick, onClose }) {
   let stateItems = [];
   let stateNote = "";
   if (tab !== "honors") {
-    if (!bank) stateNote = "The standards file (standards-bank.js) didn't load. Make sure it is uploaded next to index.html.";
-    else if (department !== bank.department) stateNote = "Common Core and Missouri standards are loaded for Mathematics so far. Other subjects will be added.";
-    else if (words.length === 0) stateNote = "Search by topic or code, for example “factor”, “quadratic”, “HSA-REI”, or “A2.APR”.";
+    if (allBanks.length === 0) stateNote = "The standards files (standards-bank.js, standards-bank-english.js, standards-bank-history.js, standards-bank-science.js) didn't load. Make sure they are uploaded next to index.html.";
+    else if (!department) stateNote = "Choose a department first.";
+    else if (!bank) stateNote = "Standards are loaded for " + listNames(allBanks.map(b => b.department)) + " so far. Other departments will be added.";
+    else if (words.length === 0) stateNote = bank.searchHint || "Search by topic or code, for example “factor”, “quadratic”, “HSA-REI”, or “A2.APR”.";
     else {
+      // Math rows include unit-level cluster headings (codes ending in .A, .B...) that are hidden.
+      // English rows (Missouri codes end in .A, .B...) are all real standards, so that bank sets hideClusters: false.
       stateItems = bank.rows
-        .filter(r => r[0] === srcKey && !isCluster(r[1]))
+        .filter(r => r[0] === srcKey && gradeOk(r[2]) && (bank.hideClusters === false || !isCluster(r[1])))
         .filter(r => words.every(w => r[3].toLowerCase().includes(w) || r[1].toLowerCase().includes(w)))
         .map(r => ({ source: srcKey === "CC" ? "Common Core" : "Missouri Learning Standards", code: r[1], ref: r[1], text: r[3] }));
       if (stateItems.length === 0) stateNote = "No standards match that search.";
@@ -996,7 +1011,12 @@ function BankModal({ school, department, course, standards, onPick, onClose }) {
   }
   const shownState = stateItems.slice(0, 40);
 
-  const tabs = [["honors", "Honors bank"], ["cc", "Common Core"], ["mo", "Missouri Learning Standards"]];
+  // Only show a source tab if this department's bank has that source (History and Science are Common Core only).
+  const hasSrc = (k) => !bank || !bank.sources || !!bank.sources[k];
+  const labelFor = (k, fallback) => (bank && bank.tabLabels && bank.tabLabels[k]) || fallback;
+  const tabs = [["honors", "Honors bank"]];
+  if (hasSrc("CC")) tabs.push(["cc", labelFor("CC", "Common Core")]);
+  if (hasSrc("MO")) tabs.push(["mo", labelFor("MO", "Missouri Learning Standards")]);
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -1028,6 +1048,13 @@ function BankModal({ school, department, course, standards, onPick, onClose }) {
 
           {tab !== "honors" && (
             <div className="space-y-2">
+              {bank && bank.scopeNote && <p className="text-xs text-gray-500">{bank.scopeNote}</p>}
+              {canFilterGrades && (
+                <label className="flex items-center gap-2 text-xs text-gray-600">
+                  <input type="checkbox" checked={allGrades} onChange={e => setAllGrades(e.target.checked)} />
+                  <span>{allGrades ? "Showing all grades." : "Showing " + school + " standards only."} Show all grades</span>
+                </label>
+              )}
               {stateNote && <p className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded px-3 py-2">{stateNote}</p>}
               {shownState.map((i, idx) => (
                 <button key={idx} onClick={() => onPick(i)}
