@@ -9,7 +9,9 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
 <script src="standards-bank.js"></script>
-<script src="easy-button.js"></script>
+<script src="standards-bank-english.js"></script>
+<script src="standards-bank-history.js"></script>
+<script src="standards-bank-science.js"></script>
 <style>
   body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
   .print-only { display: none; }
@@ -752,7 +754,7 @@ function StandardCard({ standard, showPath, portraits, canReview, onApprove, onR
             <h4 className="font-semibold text-sm text-gray-700 mb-2">Suggested assessments:</h4>
             <div className="flex flex-wrap gap-2">
               {standard.assessments.map((a, i) => (
-                <span key={i} className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm">{a}</span>
+                <span key={i} className="px-3 py-1 bg-blue-100 text-blue-700 rounded-lg text-sm leading-snug max-w-full">{a}</span>
               ))}
             </div>
           </div>
@@ -944,9 +946,21 @@ function BrowseView({
    PULL FROM BANK (mock)
    ===================================================================== */
 function BankModal({ school, department, course, standards, onPick, onClose }) {
-  const bank = window.STANDARDS_BANK || null;
+  // Each department's snapshot is its own file: standards-bank.js (Mathematics), standards-bank-english.js,
+  // standards-bank-history.js, standards-bank-science.js. A bank can set gradeFilter: true to show only the
+  // chosen school's grades (rows with grades "7", "8", "6-8" are Middle School; the rest are Upper School).
+  const allBanks = [window.STANDARDS_BANK, window.STANDARDS_BANK_ENGLISH, window.STANDARDS_BANK_HISTORY, window.STANDARDS_BANK_SCIENCE].filter(Boolean);
+  const bank = allBanks.find(b => b.department === department) || null;
   const [tab, setTab] = useState("honors");
   const [query, setQuery] = useState("");
+  const [allGrades, setAllGrades] = useState(false);
+  const MS_GRADES = ["6", "7", "8", "6-8"];
+  // middleSchoolSeesUpper: Middle School also teaches high-school courses (Algebra 1 and 2), so its searches
+  // include grades 9-12 too, listed after the grades 7-8 rows. Upper School never sees grades 7-8 unless "Show all grades" is checked.
+  const msSeesAll = !!(bank && bank.middleSchoolSeesUpper) && school === "Middle School";
+  const canFilterGrades = !!(bank && bank.gradeFilter) && !msSeesAll && (school === "Middle School" || school === "Upper School");
+  const gradeOk = (g) => !canFilterGrades || allGrades || (school === "Middle School" ? MS_GRADES.includes(g) : !MS_GRADES.includes(g));
+  const listNames = (names) => names.length < 2 ? names.join("") : names.slice(0, -1).join(", ") + " and " + names[names.length - 1];
   const q = query.trim().toLowerCase();
   const words = q.split(/\s+/).filter(Boolean);
 
@@ -984,20 +998,29 @@ function BankModal({ school, department, course, standards, onPick, onClose }) {
   let stateItems = [];
   let stateNote = "";
   if (tab !== "honors") {
-    if (!bank) stateNote = "The standards file (standards-bank.js) didn't load. Make sure it is uploaded next to index.html.";
-    else if (department !== bank.department) stateNote = "Common Core and Missouri standards are loaded for Mathematics so far. Other subjects will be added.";
-    else if (words.length === 0) stateNote = "Search by topic or code, for example “factor”, “quadratic”, “HSA-REI”, or “A2.APR”.";
+    if (allBanks.length === 0) stateNote = "The standards files (standards-bank.js, standards-bank-english.js, standards-bank-history.js, standards-bank-science.js) didn't load. Make sure they are uploaded next to index.html.";
+    else if (!department) stateNote = "Choose a department first.";
+    else if (!bank) stateNote = "Standards are loaded for " + listNames(allBanks.map(b => b.department)) + " so far. Other departments will be added.";
+    else if (words.length === 0) stateNote = bank.searchHint || "Search by topic or code, for example “factor”, “quadratic”, “HSA-REI”, or “A2.APR”.";
     else {
+      // Math rows include unit-level cluster headings (codes ending in .A, .B...) that are hidden.
+      // English rows (Missouri codes end in .A, .B...) are all real standards, so that bank sets hideClusters: false.
       stateItems = bank.rows
-        .filter(r => r[0] === srcKey && !isCluster(r[1]))
+        .filter(r => r[0] === srcKey && gradeOk(r[2]) && (bank.hideClusters === false || !isCluster(r[1])))
         .filter(r => words.every(w => r[3].toLowerCase().includes(w) || r[1].toLowerCase().includes(w)))
+        .sort((a, b) => msSeesAll ? (MS_GRADES.includes(b[2]) ? 1 : 0) - (MS_GRADES.includes(a[2]) ? 1 : 0) : 0)
         .map(r => ({ source: srcKey === "CC" ? "Common Core" : "Missouri Learning Standards", code: r[1], ref: r[1], text: r[3] }));
       if (stateItems.length === 0) stateNote = "No standards match that search.";
     }
   }
   const shownState = stateItems.slice(0, 40);
 
-  const tabs = [["honors", "Honors bank"], ["cc", "Common Core"], ["mo", "Missouri Learning Standards"]];
+  // Only show a source tab if this department's bank has that source (History and Science are Common Core only).
+  const hasSrc = (k) => !bank || !bank.sources || !!bank.sources[k];
+  const labelFor = (k, fallback) => (bank && bank.tabLabels && bank.tabLabels[k]) || fallback;
+  const tabs = [["honors", "Honors bank"]];
+  if (hasSrc("CC")) tabs.push(["cc", labelFor("CC", "Common Core")]);
+  if (hasSrc("MO")) tabs.push(["mo", labelFor("MO", "Missouri Learning Standards")]);
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -1029,6 +1052,14 @@ function BankModal({ school, department, course, standards, onPick, onClose }) {
 
           {tab !== "honors" && (
             <div className="space-y-2">
+              {bank && bank.scopeNote && <p className="text-xs text-gray-500">{bank.scopeNote}</p>}
+              {msSeesAll && <p className="text-xs text-gray-500">Showing grades 7-8 first, then grades 9-12, because Middle School offers Algebra 1 and Algebra 2.</p>}
+              {canFilterGrades && (
+                <label className="flex items-center gap-2 text-xs text-gray-600">
+                  <input type="checkbox" checked={allGrades} onChange={e => setAllGrades(e.target.checked)} />
+                  <span>{allGrades ? "Showing all grades." : "Showing " + school + " standards only."} Show all grades</span>
+                </label>
+              )}
               {stateNote && <p className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded px-3 py-2">{stateNote}</p>}
               {shownState.map((i, idx) => (
                 <button key={idx} onClick={() => onPick(i)}
@@ -1050,7 +1081,7 @@ function BankModal({ school, department, course, standards, onPick, onClose }) {
 /* =====================================================================
    CREATE STANDARD VIEW
    ===================================================================== */
-const EMPTY_FORM = { school: "", department: "", course: "", category: "", description: "" };
+const EMPTY_FORM = { school: "", department: "", course: "", category: "", description: "", unit: "" };
 
 function FormField({ label, hint, children }) {
   return (
@@ -1063,7 +1094,7 @@ function FormField({ label, hint, children }) {
   );
 }
 
-function CreateStandardView({ standards, onSave, currentUser }) {
+function CreateStandardView({ standards, units, onSave, onAddUnit, currentUser }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [pogs, setPogs] = useState([]);
   const [analysis, setAnalysis] = useState(null);
@@ -1082,6 +1113,14 @@ function CreateStandardView({ standards, onSave, currentUser }) {
   const words = countWords(form.description);
   const standardId = generateStandardId(form.course, standards.map(s => s.id));
   const stale = analysis && analyzedText !== form.description;
+  // Unit (optional): the course's existing units, plus a unit typed here that doesn't exist yet (it is created on save).
+  const unitKey = courseKey(form.school, form.department, form.course);
+  const courseUnits = (units && units[unitKey]) || [];
+  const unitChoices = form.unit && !courseUnits.includes(form.unit) ? courseUnits.concat([form.unit]) : courseUnits;
+  const unitSuggestion = form.course
+    ? suggestUnit({ id: "", category: form.category, description: form.description },
+        standards.filter(s => s.school === form.school && s.department === form.department && s.course === form.course), courseUnits)
+    : null;
 
   const pickFromBank = async (item) => {
     setShowBank(false);
@@ -1157,16 +1196,18 @@ function CreateStandardView({ standards, onSave, currentUser }) {
     if (pogs.length > 3) { setError("Choose no more than three Department Portrait statements."); return; }
 
     const placement = analysis ? { complexity: analysis.complexity, autonomy: analysis.autonomy } : { complexity: 0, autonomy: 0 };
+    if (form.unit) onAddUnit(unitKey, form.unit);
     onSave({
       id: standardId, school: form.school, department: form.department, course: form.course,
       category: form.category.trim(), description: form.description.trim(),
       placement, status: "draft", submitted: !asDraft,
       createdBy: currentUser, createdDate: new Date().toISOString().slice(0, 10),
-      alignsTo: pogs, assessments: analysis ? analysis.assessments : [], unit: ""
+      alignsTo: pogs, assessments: analysis ? analysis.assessments : [], unit: form.unit || ""
     });
     setNotice(asDraft
       ? "Saved as a draft: " + standardId + ". It stays in this browser tab only during the demo."
       : "Submitted for approval: " + standardId + ". In the full version your department chair would get an email with a review link.");
+    if (form.unit) setNotice(prev => prev + " Placed in " + form.unit + ".");
     setForm(EMPTY_FORM); setPogs([]); setAnalysis(null); setAnalyzedText(""); setBankRef("");
   };
 
@@ -1191,7 +1232,7 @@ function CreateStandardView({ standards, onSave, currentUser }) {
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <FormField label="School *">
-              <select value={form.school} onChange={e => { set({ school: e.target.value, department: "", course: "" }); setPogs([]); }}
+              <select value={form.school} onChange={e => { set({ school: e.target.value, department: "", course: "", unit: "" }); setPogs([]); }}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg">
                 <option value="">Select School</option>
                 {Object.keys(COURSE_DATA).map(s => <option key={s} value={s}>{s}</option>)}
@@ -1199,7 +1240,7 @@ function CreateStandardView({ standards, onSave, currentUser }) {
             </FormField>
             <FormField label="Department *">
               <select value={form.department} disabled={!form.school}
-                onChange={e => { set({ department: e.target.value, course: "" }); setPogs([]); }}
+                onChange={e => { set({ department: e.target.value, course: "", unit: "" }); setPogs([]); }}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg disabled:bg-gray-100">
                 <option value="">Select Department</option>
                 {form.school && Object.keys(COURSE_DATA[form.school]).map(d => <option key={d} value={d}>{d}</option>)}
@@ -1207,7 +1248,7 @@ function CreateStandardView({ standards, onSave, currentUser }) {
             </FormField>
             <FormField label="Course *">
               <select value={form.course} disabled={!form.department || courses.length === 0}
-                onChange={e => set({ course: e.target.value })}
+                onChange={e => set({ course: e.target.value, unit: "" })}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg disabled:bg-gray-100">
                 <option value="">{form.department && courses.length === 0 ? "No courses listed" : "Select Course"}</option>
                 {courses.map(c => <option key={c} value={c}>{c}</option>)}
@@ -1219,6 +1260,13 @@ function CreateStandardView({ standards, onSave, currentUser }) {
             <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
               <strong>Standard ID (auto-generated):</strong> {standardId}
             </div>
+          )}
+
+          {form.course && (
+            <FormField label="Unit" hint="(optional; you can also set it later in the Course Outline)">
+              <UnitPicker value={form.unit} unitList={unitChoices} suggestion={unitSuggestion} idPrefix="create-unit" emptyLabel="No unit yet"
+                onChoose={(u) => set({ unit: u })} onCreate={(n) => set({ unit: n })} />
+            </FormField>
           )}
 
           <FormField label="Category *" hint={"(" + form.category.length + "/30 characters)"}>
@@ -1258,7 +1306,7 @@ function CreateStandardView({ standards, onSave, currentUser }) {
               <h4 className="font-semibold text-sm text-gray-700 mb-2">Suggested assessments (optional):</h4>
               <div className="flex flex-wrap gap-2">
                 {analysis.assessments.map((a, i) => (
-                  <span key={i} className="px-3 py-1 bg-indigo-100 text-indigo-800 rounded-full text-sm">{a}</span>
+                  <span key={i} className="px-3 py-1 bg-indigo-100 text-indigo-800 rounded-lg text-sm leading-snug max-w-full">{a}</span>
                 ))}
               </div>
             </div>
@@ -1349,7 +1397,87 @@ function PrintPortrait({ title, tagline, statements, notice }) {
   );
 }
 
-function OutlineStandard({ s, unitList, onAssignUnit }) {
+// ---------- Unit suggestions and the unit picker ----------
+const UNIT_STOPWORDS = new Set(("students will student the and with for that from into their each using use used solve solving problem problems " +
+  "real world understand apply analyze analyse describe explain given various include including also than they them this these those are can " +
+  "one two other such about between within through over under form forms different based any all how why what when which where was were has have").split(" "));
+const unitStem = (w) => w.replace(/(ing|ed|es|s)$/, "");
+function unitWords(text) {
+  return (text || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/)
+    .filter(w => w.length > 2 && !UNIT_STOPWORDS.has(w)).map(unitStem).filter(w => w.length > 2);
+}
+// Suggests one of the course's existing units for a standard, or null. Two signals:
+// (1) other standards with the same category already sit in a unit; (2) wording overlaps the unit name or its standards.
+function suggestUnit(item, courseStandards, unitList) {
+  if (!unitList || unitList.length === 0) return null;
+  const cat = (item.category || "").trim().toLowerCase();
+  if (cat) {
+    const counts = {};
+    courseStandards.forEach(o => {
+      if (o.id !== item.id && unitList.includes(o.unit) && (o.category || "").trim().toLowerCase() === cat) counts[o.unit] = (counts[o.unit] || 0) + 1;
+    });
+    const ranked = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+    if (ranked.length === 1 || (ranked.length > 1 && counts[ranked[0]] > counts[ranked[1]]))
+      return { unit: ranked[0], reason: "other “" + item.category.trim() + "” standards are in this unit" };
+  }
+  const mine = new Set(unitWords((item.category || "") + " " + (item.description || "")));
+  if (mine.size === 0) return null;
+  const scored = unitList.map(u => {
+    const nameWords = unitWords(u.replace(/^\s*unit\s*\d+\s*[:\-–.]?\s*/i, ""));
+    let score = 0, nameHit = false;
+    nameWords.forEach(w => { if (mine.has(w)) { score += 3; nameHit = true; } });
+    courseStandards.forEach(o => {
+      if (o.unit === u && o.id !== item.id) unitWords((o.category || "") + " " + (o.description || "")).forEach(w => { if (w.length > 4 && mine.has(w)) score += 1; });
+    });
+    return { unit: u, score: score, nameHit: nameHit };
+  }).sort((a, b) => b.score - a.score);
+  const top = scored[0], next = scored[1];
+  if (top.score < 3 || (next && next.score === top.score)) return null;
+  return { unit: top.unit, reason: top.nameHit ? "matches the unit name" : "matches standards already in this unit" };
+}
+
+// A unit dropdown that can also create a unit on the spot ("+ New unit…") and offers a one-click suggestion.
+function UnitPicker({ value, unitList, suggestion, idPrefix, emptyLabel, onChoose, onCreate }) {
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const cleanName = name.trim();
+  const finish = () => { if (!cleanName) return; onCreate(cleanName); setName(""); setAdding(false); };
+  const cancel = () => { setName(""); setAdding(false); };
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-2 flex-wrap">
+        <select id={idPrefix} value={adding ? "__new__" : value} aria-label="Unit"
+          onChange={e => { if (e.target.value === "__new__") setAdding(true); else { setAdding(false); onChoose(e.target.value); } }}
+          className="px-2 py-1 border border-gray-300 rounded text-sm">
+          <option value="">{emptyLabel || "Unassigned"}</option>
+          {unitList.map(u => <option key={u} value={u}>{u}</option>)}
+          <option value="__new__">+ New unit…</option>
+        </select>
+        {suggestion && !value && !adding && (
+          <span className="flex items-center gap-1 flex-wrap text-xs">
+            <span className="text-gray-500">Suggested:</span>
+            <button type="button" onClick={() => onChoose(suggestion.unit)}
+              className="px-2 py-0.5 rounded-full bg-green-100 text-green-800 border border-green-300 hover:bg-green-200">{suggestion.unit}</button>
+            <span className="text-gray-400">({suggestion.reason})</span>
+          </span>
+        )}
+      </div>
+      {adding && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <input type="text" autoFocus value={name} onChange={e => setName(e.target.value)} aria-label="New unit name"
+            onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); finish(); } else if (e.key === "Escape") cancel(); }}
+            placeholder="e.g., Unit 3: Systems of Equations"
+            className="flex-1 min-w-[14rem] px-2 py-1 border border-gray-300 rounded text-sm" />
+          <button type="button" onClick={finish} disabled={!cleanName}
+            className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed">Create and use</button>
+          <button type="button" onClick={cancel} className="px-3 py-1 text-sm text-gray-600 hover:text-gray-900">Cancel</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OutlineStandard({ s, unitList, suggestion, onAssignUnit, onAddUnit }) {
   const draft = s.status === "draft";
   return (
     <div className="avoid-break border-l-4 pl-3 py-2 bg-white"
@@ -1358,20 +1486,16 @@ function OutlineStandard({ s, unitList, onAssignUnit }) {
         <span className="font-semibold text-blue-600">{s.id}</span>
         <span className="text-gray-600">{s.category}</span>
         {draft && <span className="italic text-yellow-700 font-medium">DRAFT</span>}
-        {s.aiSuggested && <span className="text-xs bg-purple-100 text-purple-800 border border-purple-300 rounded px-2 py-0.5">AI-suggested</span>}
       </div>
       <p className={"text-sm text-gray-800 " + (draft ? "italic" : "")}>{s.description}</p>
-      {s.sourceNote && <p className="text-xs text-gray-500 mt-1">{s.sourceNote}</p>}
       <div className="flex flex-wrap gap-1 mt-1">
         {s.alignsTo.map(code => <CodeChip key={code} code={code} tone="dept" />)}
       </div>
-      <div className="no-print mt-2 flex items-center gap-2">
-        <label className="text-xs text-gray-500" htmlFor={"unit-" + s.id}>Unit</label>
-        <select id={"unit-" + s.id} value={s.unit || ""} onChange={e => onAssignUnit(s.id, e.target.value)}
-          className="px-2 py-1 border border-gray-300 rounded text-sm">
-          <option value="">Unassigned</option>
-          {unitList.map(u => <option key={u} value={u}>{u}</option>)}
-        </select>
+      <div className="no-print mt-2 flex items-start gap-2">
+        <span className="text-xs text-gray-500 pt-1.5">Unit</span>
+        <UnitPicker value={s.unit || ""} unitList={unitList} suggestion={suggestion} idPrefix={"unit-" + s.id}
+          onChoose={(u) => onAssignUnit(s.id, u)}
+          onCreate={(n) => { onAddUnit(n); onAssignUnit(s.id, n); }} />
       </div>
     </div>
   );
@@ -1386,7 +1510,7 @@ function UnitsSection({ courseStandards, unitList, onAddUnit, onAssignUnit }) {
   return (
     <section>
       <SectionTitle title="Units and standards"
-        subtitle="Units are named by the teachers. Add a unit, then assign each standard to one." />
+        subtitle="Units are named by the teachers. Add a unit below, or choose “+ New unit…” from any standard's Unit menu. When a standard's wording matches a unit, it is suggested." />
       <div className="no-print flex gap-2 mb-4 flex-wrap">
         <input type="text" value={newUnit} onChange={e => setNewUnit(e.target.value)} aria-label="New unit name"
           onKeyDown={e => { if (e.key === "Enter") add(); }}
@@ -1410,7 +1534,7 @@ function UnitsSection({ courseStandards, unitList, onAddUnit, onAssignUnit }) {
               <h4 className="font-semibold text-gray-800 mb-2 pb-1 border-b border-gray-300">{u}</h4>
               {items.length === 0
                 ? <p className="text-sm text-gray-500 italic">No standards in this unit yet.</p>
-                : <div className="space-y-2">{items.map(s => <OutlineStandard key={s.id} s={s} unitList={unitList} onAssignUnit={onAssignUnit} />)}</div>}
+                : <div className="space-y-2">{items.map(s => <OutlineStandard key={s.id} s={s} unitList={unitList} suggestion={null} onAssignUnit={onAssignUnit} onAddUnit={onAddUnit} />)}</div>}
             </div>
           );
         })}
@@ -1420,7 +1544,7 @@ function UnitsSection({ courseStandards, unitList, onAddUnit, onAssignUnit }) {
               {unitList.length === 0 ? "Standards" : "Not yet in a unit"}
             </h4>
             <div className="space-y-2">
-              {unassigned.map(s => <OutlineStandard key={s.id} s={s} unitList={unitList} onAssignUnit={onAssignUnit} />)}
+              {unassigned.map(s => <OutlineStandard key={s.id} s={s} unitList={unitList} suggestion={suggestUnit(s, courseStandards, unitList)} onAssignUnit={onAssignUnit} onAddUnit={onAddUnit} />)}
             </div>
           </div>
         )}
@@ -1727,7 +1851,7 @@ function LevelsSection({ course, standards }) {
   );
 }
 
-function OutlineReport({ course, portrait, standards, unitList, onAddUnit, onAssignUnit, onApplyDraft }) {
+function OutlineReport({ course, portrait, standards, unitList, onAddUnit, onAssignUnit }) {
   const courseStandards = standards.filter(s => matchesCourse(s, course));
   const today = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
 
@@ -1763,11 +1887,6 @@ function OutlineReport({ course, portrait, standards, unitList, onAddUnit, onAss
         )}
       </div>
 
-      {window.EasyButton && React.createElement(window.EasyButton, {
-        course: course, portrait: portrait, existingCount: courseStandards.length, workerUrl: WORKER_URL,
-        onApply: (draftUnits) => onApplyDraft(course, draftUnits)
-      })}
-
       <UnitsSection courseStandards={courseStandards} unitList={unitList} onAddUnit={onAddUnit} onAssignUnit={onAssignUnit} />
 
       <div className="print-break space-y-8">
@@ -1776,17 +1895,11 @@ function OutlineReport({ course, portrait, standards, unitList, onAddUnit, onAss
         <SameGradeSection course={course} courseStandards={courseStandards} standards={standards} />
         <LevelsSection course={course} standards={standards} />
       </div>
-
-      {courseStandards.some(s => /NCAS/.test(s.sourceNote || "")) && (
-        <p className="text-xs text-gray-500 avoid-break">
-          National Core Arts Standards © 2014 National Coalition for Arts Standards. Rights administered by Young Audiences, Inc. New York, NY. All rights reserved. https://www.nationalartsstandards.org
-        </p>
-      )}
     </div>
   );
 }
 
-function OutlineView({ standards, units, onAddUnit, onAssignUnit, onApplyDraft }) {
+function OutlineView({ standards, units, onAddUnit, onAssignUnit }) {
   const [school, setSchool] = useState("");
   const [department, setDepartment] = useState("");
   const [courseName, setCourseName] = useState("");
@@ -1847,7 +1960,7 @@ function OutlineView({ standards, units, onAddUnit, onAssignUnit, onApplyDraft }
 
       {course && (
         <OutlineReport key={key} course={course} portrait={portrait} standards={standards}
-          unitList={units[key] || []} onAddUnit={(name) => onAddUnit(key, name)} onAssignUnit={onAssignUnit} onApplyDraft={onApplyDraft} />
+          unitList={units[key] || []} onAddUnit={(name) => onAddUnit(key, name)} onAssignUnit={onAssignUnit} />
       )}
     </div>
   );
@@ -1893,32 +2006,6 @@ function App() {
     });
   };
   const assignUnit = (id, unit) => setStandards(prev => prev.map(s => s.id === id ? Object.assign({}, s, { unit: unit }) : s));
-  // Easy button: adds the teacher-reviewed draft (units + standards) to a course outline.
-  const applyEasyDraft = (course, draftUnits) => {
-    const key = courseKey(course.school, course.department, course.name);
-    setUnits(prev => {
-      const current = prev[key] || [];
-      const fresh = draftUnits.map(u => u.name).filter((n, i, arr) => !current.includes(n) && arr.indexOf(n) === i);
-      return Object.assign({}, prev, { [key]: current.concat(fresh) });
-    });
-    setStandards(prev => {
-      const ids = prev.map(s => s.id);
-      const today = new Date().toISOString().slice(0, 10);
-      const created = [];
-      draftUnits.forEach(u => u.standards.forEach(st => {
-        const id = generateStandardId(course.name, ids);
-        ids.push(id);
-        created.push({
-          id: id, unit: u.name, school: course.school, department: course.department, course: course.name,
-          category: st.category, description: st.description,
-          placement: { complexity: 0, autonomy: 0 }, status: "draft", submitted: false,
-          createdBy: DEMO_USER, createdDate: today,
-          alignsTo: st.alignsTo || [], assessments: [], aiSuggested: true, sourceNote: st.sourceNote
-        });
-      }));
-      return prev.concat(created);
-    });
-  };
   const approve = (id) => setStandards(prev => prev.map(s => s.id === id ? { ...s, status: "approved" } : s));
   const reject = (id, comment) => {
     console.log("Rejected", id, "with comment:", comment);
@@ -1985,8 +2072,8 @@ function App() {
             course={course} setCourse={setCourse} searchTerm={searchTerm} setSearchTerm={setSearchTerm}
             statusFilter={statusFilter} setStatusFilter={setStatusFilter} />
         )}
-        {view === "create" && <CreateStandardView standards={standards} onSave={addStandard} currentUser={DEMO_USER} />}
-        {view === "outline" && <OutlineView standards={standards} units={units} onAddUnit={addUnit} onAssignUnit={assignUnit} onApplyDraft={applyEasyDraft} />}
+        {view === "create" && <CreateStandardView standards={standards} units={units} onSave={addStandard} onAddUnit={addUnit} currentUser={DEMO_USER} />}
+        {view === "outline" && <OutlineView standards={standards} units={units} onAddUnit={addUnit} onAssignUnit={assignUnit} />}
       </main>
     </div>
   );
