@@ -12,6 +12,7 @@
 <script src="standards-bank-english.js"></script>
 <script src="standards-bank-history.js"></script>
 <script src="standards-bank-science.js"></script>
+<script src="easy-button.js"></script>
 <style>
   body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
   .print-only { display: none; }
@@ -1486,8 +1487,10 @@ function OutlineStandard({ s, unitList, suggestion, onAssignUnit, onAddUnit }) {
         <span className="font-semibold text-blue-600">{s.id}</span>
         <span className="text-gray-600">{s.category}</span>
         {draft && <span className="italic text-yellow-700 font-medium">DRAFT</span>}
+        {s.aiSuggested && <span className="text-xs bg-purple-100 text-purple-800 border border-purple-300 rounded px-2 py-0.5">AI-suggested</span>}
       </div>
       <p className={"text-sm text-gray-800 " + (draft ? "italic" : "")}>{s.description}</p>
+      {s.sourceNote && <p className="text-xs text-gray-500 mt-1">{s.sourceNote}</p>}
       <div className="flex flex-wrap gap-1 mt-1">
         {s.alignsTo.map(code => <CodeChip key={code} code={code} tone="dept" />)}
       </div>
@@ -1851,7 +1854,7 @@ function LevelsSection({ course, standards }) {
   );
 }
 
-function OutlineReport({ course, portrait, standards, unitList, onAddUnit, onAssignUnit }) {
+function OutlineReport({ course, portrait, standards, unitList, onAddUnit, onAssignUnit, onApplyDraft }) {
   const courseStandards = standards.filter(s => matchesCourse(s, course));
   const today = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
 
@@ -1887,6 +1890,11 @@ function OutlineReport({ course, portrait, standards, unitList, onAddUnit, onAss
         )}
       </div>
 
+      {window.EasyButton && React.createElement(window.EasyButton, {
+        course: course, portrait: portrait, existingCount: courseStandards.length, workerUrl: WORKER_URL,
+        onApply: (draftUnits) => onApplyDraft(course, draftUnits)
+      })}
+
       <UnitsSection courseStandards={courseStandards} unitList={unitList} onAddUnit={onAddUnit} onAssignUnit={onAssignUnit} />
 
       <div className="print-break space-y-8">
@@ -1895,11 +1903,17 @@ function OutlineReport({ course, portrait, standards, unitList, onAddUnit, onAss
         <SameGradeSection course={course} courseStandards={courseStandards} standards={standards} />
         <LevelsSection course={course} standards={standards} />
       </div>
+
+      {courseStandards.some(s => /NCAS/.test(s.sourceNote || "")) && (
+        <p className="text-xs text-gray-500 avoid-break">
+          National Core Arts Standards © 2014 National Coalition for Arts Standards. Rights administered by Young Audiences, Inc. New York, NY. All rights reserved. https://www.nationalartsstandards.org
+        </p>
+      )}
     </div>
   );
 }
 
-function OutlineView({ standards, units, onAddUnit, onAssignUnit }) {
+function OutlineView({ standards, units, onAddUnit, onAssignUnit, onApplyDraft }) {
   const [school, setSchool] = useState("");
   const [department, setDepartment] = useState("");
   const [courseName, setCourseName] = useState("");
@@ -1960,7 +1974,7 @@ function OutlineView({ standards, units, onAddUnit, onAssignUnit }) {
 
       {course && (
         <OutlineReport key={key} course={course} portrait={portrait} standards={standards}
-          unitList={units[key] || []} onAddUnit={(name) => onAddUnit(key, name)} onAssignUnit={onAssignUnit} />
+          unitList={units[key] || []} onAddUnit={(name) => onAddUnit(key, name)} onAssignUnit={onAssignUnit} onApplyDraft={onApplyDraft} />
       )}
     </div>
   );
@@ -2006,6 +2020,32 @@ function App() {
     });
   };
   const assignUnit = (id, unit) => setStandards(prev => prev.map(s => s.id === id ? Object.assign({}, s, { unit: unit }) : s));
+  // Easy button: adds the teacher-reviewed draft (units + standards) to a course outline.
+  const applyEasyDraft = (course, draftUnits) => {
+    const key = courseKey(course.school, course.department, course.name);
+    setUnits(prev => {
+      const current = prev[key] || [];
+      const fresh = draftUnits.map(u => u.name).filter((n, i, arr) => !current.includes(n) && arr.indexOf(n) === i);
+      return Object.assign({}, prev, { [key]: current.concat(fresh) });
+    });
+    setStandards(prev => {
+      const ids = prev.map(s => s.id);
+      const today = new Date().toISOString().slice(0, 10);
+      const created = [];
+      draftUnits.forEach(u => u.standards.forEach(st => {
+        const id = generateStandardId(course.name, ids);
+        ids.push(id);
+        created.push({
+          id: id, unit: u.name, school: course.school, department: course.department, course: course.name,
+          category: st.category, description: st.description,
+          placement: { complexity: 0, autonomy: 0 }, status: "draft", submitted: false,
+          createdBy: DEMO_USER, createdDate: today,
+          alignsTo: st.alignsTo || [], assessments: [], aiSuggested: true, sourceNote: st.sourceNote
+        });
+      }));
+      return prev.concat(created);
+    });
+  };
   const approve = (id) => setStandards(prev => prev.map(s => s.id === id ? { ...s, status: "approved" } : s));
   const reject = (id, comment) => {
     console.log("Rejected", id, "with comment:", comment);
@@ -2073,7 +2113,7 @@ function App() {
             statusFilter={statusFilter} setStatusFilter={setStatusFilter} />
         )}
         {view === "create" && <CreateStandardView standards={standards} units={units} onSave={addStandard} onAddUnit={addUnit} currentUser={DEMO_USER} />}
-        {view === "outline" && <OutlineView standards={standards} units={units} onAddUnit={addUnit} onAssignUnit={assignUnit} />}
+        {view === "outline" && <OutlineView standards={standards} units={units} onAddUnit={addUnit} onAssignUnit={assignUnit} onApplyDraft={applyEasyDraft} />}
       </main>
     </div>
   );
