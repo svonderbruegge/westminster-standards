@@ -12,6 +12,9 @@
 <script src="standards-bank-english.js"></script>
 <script src="standards-bank-history.js"></script>
 <script src="standards-bank-science.js"></script>
+<script src="standards-bank-history-add.js"></script>
+<script src="standards-bank-science-add.js"></script>
+<script src="standards-credits.js"></script>
 <script src="easy-button.js"></script>
 <style>
   body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
@@ -995,7 +998,7 @@ function BankModal({ school, department, course, standards, onPick, onClose }) {
 
   // Common Core / Missouri snapshot
   const isCluster = (code) => /\.[A-Z]$/.test(code);
-  const srcKey = tab === "cc" ? "CC" : "MO";
+  const srcKey = tab.toUpperCase();
   let stateItems = [];
   let stateNote = "";
   if (tab !== "honors") {
@@ -1010,7 +1013,7 @@ function BankModal({ school, department, course, standards, onPick, onClose }) {
         .filter(r => r[0] === srcKey && gradeOk(r[2]) && (bank.hideClusters === false || !isCluster(r[1])))
         .filter(r => words.every(w => r[3].toLowerCase().includes(w) || r[1].toLowerCase().includes(w)))
         .sort((a, b) => msSeesAll ? (MS_GRADES.includes(b[2]) ? 1 : 0) - (MS_GRADES.includes(a[2]) ? 1 : 0) : 0)
-        .map(r => ({ source: srcKey === "CC" ? "Common Core" : "Missouri Learning Standards", code: r[1], ref: r[1], text: r[3] }));
+        .map(r => ({ source: ({ CC: "Common Core", MO: "Missouri Learning Standards", NGSS: "NGSS", C3: "C3 Framework" })[srcKey] || srcKey, code: r[1], ref: r[1], text: r[3] }));
       if (stateItems.length === 0) stateNote = "No standards match that search.";
     }
   }
@@ -1022,6 +1025,9 @@ function BankModal({ school, department, course, standards, onPick, onClose }) {
   const tabs = [["honors", "Honors bank"]];
   if (hasSrc("CC")) tabs.push(["cc", labelFor("CC", "Common Core")]);
   if (hasSrc("MO")) tabs.push(["mo", labelFor("MO", "Missouri Learning Standards")]);
+  // NGSS and C3 tabs appear only for departments whose bank has those sources.
+  if (bank && bank.sources && bank.sources.NGSS) tabs.push(["ngss", labelFor("NGSS", "NGSS")]);
+  if (bank && bank.sources && bank.sources.C3) tabs.push(["c3", labelFor("C3", "C3 Framework")]);
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -1071,6 +1077,7 @@ function BankModal({ school, department, course, standards, onPick, onClose }) {
               ))}
               {stateItems.length > 40 && <p className="text-xs text-gray-500">Showing the first 40 of {stateItems.length}. Add another word to narrow the search.</p>}
               {shownState.length > 0 && <p className="text-xs text-gray-500">Choosing a standard rewords it to begin with “Students will...” so you can edit it.</p>}
+              {bank && bank.credits && bank.credits[srcKey] && <p className="text-xs text-gray-500">{bank.credits[srcKey]}</p>}
             </div>
           )}
         </div>
@@ -1904,11 +1911,9 @@ function OutlineReport({ course, portrait, standards, unitList, onAddUnit, onAss
         <LevelsSection course={course} standards={standards} />
       </div>
 
-      {courseStandards.some(s => /NCAS/.test(s.sourceNote || "")) && (
-        <p className="text-xs text-gray-500 avoid-break">
-          National Core Arts Standards © 2014 National Coalition for Arts Standards. Rights administered by Young Audiences, Inc. New York, NY. All rights reserved. https://www.nationalartsstandards.org
-        </p>
-      )}
+      {window.creditsForNotes && window.creditsForNotes(courseStandards.map(s => s.sourceNote || "")).map(c => (
+        <p key={c.key} className="text-xs text-gray-500 avoid-break">{c.text}</p>
+      ))}
     </div>
   );
 }
@@ -2115,6 +2120,10 @@ function App() {
         {view === "create" && <CreateStandardView standards={standards} units={units} onSave={addStandard} onAddUnit={addUnit} currentUser={DEMO_USER} />}
         {view === "outline" && <OutlineView standards={standards} units={units} onAddUnit={addUnit} onAssignUnit={assignUnit} onApplyDraft={applyEasyDraft} />}
       </main>
+
+      <footer className="container mx-auto px-4 pb-8 text-xs text-gray-500 space-y-1 no-print">
+        {(window.STANDARDS_CREDITS || []).filter(c => c.key !== "NCAS").map(c => <p key={c.key}>{c.text}</p>)}
+      </footer>
     </div>
   );
 }

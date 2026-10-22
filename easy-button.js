@@ -25,7 +25,7 @@
 
   // One bank file per department; each sets a window variable with a matching "department".
   var BANK_VARS = ["STANDARDS_BANK", "STANDARDS_BANK_ENGLISH", "STANDARDS_BANK_HISTORY", "STANDARDS_BANK_SCIENCE"];
-  var MAX_SOURCES = 200;
+  var MAX_SOURCES = 300;
   var MIN_UNITS = 3;
   var MAX_UNITS = 8;
   var DEFAULT_UNITS = 6;
@@ -80,7 +80,9 @@
     var eligible = bank.rows.filter(function (r) {
       var code = String(r[1] || "");
       var text = String(r[3] || "");
-      if (/\.[A-Z]$/.test(code)) return false;       // cluster headings (Math)
+      // Cluster headings (Math codes ending .A, .B). Banks whose codes legitimately end in a letter
+      // (English, History) set hideClusters: false, and nothing is hidden for them.
+      if (bank.hideClusters !== false && /\.[A-Z]$/.test(code)) return false;
       if (text.length < 25) return false;             // headings and fragments
       return gradesOverlap(r[2], grades);
     });
