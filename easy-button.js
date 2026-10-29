@@ -199,7 +199,7 @@
     var isAi = /^AI-drafted/.test(s.sourceNote || "");
     return h("div", {
       className: "border-l-4 pl-3 py-2 bg-white " + (s.include ? "" : "opacity-50"),
-      style: { borderLeftColor: s.include ? "#7C3AED" : "#D1D5DB" }
+      style: { borderLeftColor: s.include ? "#2A8FBA" : "#CFE0F1" }
     },
       h("div", { className: "flex items-start gap-3" },
         h("input", {
@@ -210,7 +210,7 @@
         h("div", { className: "flex-1 min-w-0" },
           h("div", { className: "flex items-center gap-2 flex-wrap text-xs mb-1" },
             h("span", { className: "font-semibold text-gray-700" }, s.category),
-            h("span", { className: isAi ? "text-yellow-700" : "text-blue-700" }, s.sourceNote),
+            h("span", { className: isAi ? "rounded-full px-2 py-0.5 bg-purple-100 text-purple-800 font-semibold" : "text-blue-700" }, s.sourceNote),
             (s.alignsTo || []).map(function (c) {
               return h("span", { key: c, className: "px-2 py-0.5 rounded bg-purple-50 text-purple-800 border border-purple-200" }, c);
             })

@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Westminster Standards Platform</title>
 <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="theme-config.js"></script>
+<link rel="stylesheet" href="theme.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
@@ -17,7 +19,6 @@
 <script src="standards-credits.js"></script>
 <script src="easy-button.js"></script>
 <style>
-  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
   .print-only { display: none; }
   @media print {
     .no-print { display: none !important; }
@@ -28,7 +29,7 @@
     main { padding: 0 !important; }
     .container { max-width: 100% !important; }
   }
-  button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+  button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid #255AA8; outline-offset: 2px; }
 </style>
 </head>
 <body class="bg-gray-50">
@@ -565,11 +566,11 @@ const countWords = (text) => text.trim().split(/\s+/).filter(Boolean).length;
 
 function rigorBadgeClass(p) {
   const sum = p.complexity + p.autonomy;
-  if (sum <= 1) return "bg-green-100 text-green-800 border-green-300";
-  if (sum <= 3) return "bg-blue-100 text-blue-800 border-blue-300";
-  if (sum <= 4) return "bg-yellow-100 text-yellow-800 border-yellow-300";
-  if (sum <= 5) return "bg-orange-100 text-orange-800 border-orange-300";
-  return "bg-red-100 text-red-800 border-red-300";
+  if (sum <= 1) return "rigor-1";
+  if (sum <= 3) return "rigor-2";
+  if (sum <= 4) return "rigor-3";
+  if (sum <= 5) return "rigor-4";
+  return "rigor-5";
 }
 
 /* =====================================================================
@@ -604,12 +605,7 @@ function Icon({ name, className = "w-5 h-5" }) {
 function StatusBadge({ status }) {
   const draft = status === "draft";
   return (
-    <div className="flex items-center gap-2">
-      <div className={"w-3 h-3 rounded-full " + (draft ? "bg-yellow-400" : "bg-blue-600")}></div>
-      <span className={"text-sm font-medium " + (draft ? "text-yellow-700" : "text-blue-700")}>
-        {draft ? "DRAFT" : "APPROVED"}
-      </span>
-    </div>
+    <span className={"wca-chip " + (draft ? "draft" : "approved")}>{draft ? "Draft" : "Approved"}</span>
   );
 }
 
@@ -708,7 +704,7 @@ function StandardCard({ standard, showPath, portraits, canReview, onApprove, onR
 
   return (
     <div className="bg-white rounded-lg shadow-md overflow-hidden border-l-4"
-      style={{ borderLeftColor: isDraft ? "#FCD34D" : "#2563EB" }}>
+      style={{ borderLeftColor: isDraft ? "#A9C2E0" : "#255AA8" }}>
       <div className="p-4 cursor-pointer hover:bg-gray-50 transition-colors" onClick={() => setOpen(!open)}>
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1">
@@ -802,9 +798,8 @@ function StandardCard({ standard, showPath, portraits, canReview, onApprove, onR
    ===================================================================== */
 function FilterPill({ active, onClick, children }) {
   return (
-    <button onClick={onClick}
-      className={"px-4 py-2 rounded-full text-sm font-medium transition-colors " +
-        (active ? "bg-blue-600 text-white" : "bg-gray-200 text-gray-700 hover:bg-gray-300")}>
+    <button onClick={onClick} aria-pressed={!!active}
+      className={"wca-pill small" + (active ? " on" : "")}>
       {children}
     </button>
   );
@@ -862,7 +857,7 @@ function BrowseView({
       </div>
 
       <p className="text-sm text-gray-500">
-        Click any standard to see how it aligns to the portrait. Yellow DRAFT cards are still waiting for approval.
+        Click any standard to see how it aligns to the portrait. Cards marked DRAFT are still waiting for approval.
         To write a new one, use Create Standard.
       </p>
 
@@ -1489,7 +1484,7 @@ function OutlineStandard({ s, unitList, suggestion, onAssignUnit, onAddUnit }) {
   const draft = s.status === "draft";
   return (
     <div className="avoid-break border-l-4 pl-3 py-2 bg-white"
-      style={{ borderLeftColor: draft ? "#FCD34D" : "#2563EB" }}>
+      style={{ borderLeftColor: draft ? "#A9C2E0" : "#255AA8" }}>
       <div className="flex items-center gap-2 flex-wrap text-sm">
         <span className="font-semibold text-blue-600">{s.id}</span>
         <span className="text-gray-600">{s.category}</span>
@@ -1991,9 +1986,8 @@ function OutlineView({ standards, units, onAddUnit, onAssignUnit, onApplyDraft }
    ===================================================================== */
 function NavButton({ active, onClick, icon, children }) {
   return (
-    <button onClick={onClick}
-      className={"py-4 px-2 border-b-2 font-medium transition-colors flex items-center gap-2 " +
-        (active ? "border-blue-600 text-blue-600" : "border-transparent text-gray-600 hover:text-gray-800")}>
+    <button onClick={onClick} aria-current={active ? "page" : undefined}
+      className={"wca-pill" + (active ? " on" : "")}>
       <Icon name={icon} className="w-4 h-4" /> {children}
     </button>
   );
@@ -2066,42 +2060,30 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white shadow-lg no-print">
-        <div className="container mx-auto px-4 py-6">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
-            <div>
-              <h1 className="text-3xl font-bold">Westminster Standards Platform</h1>
-              <p className="text-blue-100 mt-1">Building academic excellence through clear, rigorous standards</p>
-              <p className="text-blue-200 text-sm mt-1">Phase 1 demo: sample data, nothing is saved</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Icon name="users" className="w-5 h-5" />
-              <div className="text-right">
-                <div className="text-sm font-medium">{DEMO_USER}</div>
-                <div className="text-xs text-blue-200 capitalize">{userRole}</div>
-              </div>
-            </div>
-          </div>
+      <header className="wca-header no-print">
+        <div className="wca-wrap">
+          <img className="wca-crest" src="logo.png" alt="" onError={(e) => { e.target.style.display = "none"; }} />
+          <span className="wca-wordmark">Standards Platform<small>Westminster Christian Academy</small><em className="wca-tagline">Building academic excellence through clear, rigorous standards</em></span>
+          <span className="wca-who"><b>{DEMO_USER}</b><span className="capitalize">{userRole}</span></span>
         </div>
       </header>
 
-      <div className="bg-yellow-50 border-b border-yellow-200 no-print">
-        <div className="container mx-auto px-4 py-2">
-          <div className="flex items-center gap-x-4 gap-y-1 text-sm flex-wrap">
-            <span className="text-yellow-800 font-medium">Demo mode, choose a role:</span>
+      <div className="wca-wrap no-print">
+        <div className="wca-demo">
+          <span>Demo mode</span>
+          <span className="wca-demo-note">Sample data, nothing is saved.</span>
+          <span className="wca-pills" role="group" aria-label="Choose a role">
             {roles.map(([value, label]) => (
-              <label key={value} className="flex items-center gap-2">
-                <input type="radio" name="role" checked={userRole === value} onChange={() => setUserRole(value)} />
-                {label}
-              </label>
+              <button key={value} onClick={() => setUserRole(value)} aria-pressed={userRole === value}
+                className={"wca-pill small" + (userRole === value ? " on" : "")}>{label}</button>
             ))}
-          </div>
+          </span>
         </div>
       </div>
 
-      <nav className="bg-white shadow-md no-print">
-        <div className="container mx-auto px-4">
-          <div className="flex space-x-8 overflow-x-auto">
+      <nav className="wca-nav no-print" aria-label="Sections">
+        <div className="wca-wrap">
+          <div className="wca-navrow">
             <NavButton active={view === "browse"} onClick={() => setView("browse")} icon="book">Browse Standards</NavButton>
             <NavButton active={view === "create"} onClick={() => setView("create")} icon="plus">Create Standard</NavButton>
             <NavButton active={view === "outline"} onClick={() => setView("outline")} icon="target">Course Outlines</NavButton>
@@ -2109,7 +2091,7 @@ function App() {
         </div>
       </nav>
 
-      <main className="container mx-auto px-4 py-8">
+      <main className="wca-wrap wca-main">
         {view === "browse" && (
           <BrowseView standards={standards} onApprove={approve} onReject={reject}
             userRole={userRole} currentUser={DEMO_USER} chairDepartment={DEMO_CHAIR_DEPARTMENT}
@@ -2121,7 +2103,7 @@ function App() {
         {view === "outline" && <OutlineView standards={standards} units={units} onAddUnit={addUnit} onAssignUnit={assignUnit} onApplyDraft={applyEasyDraft} />}
       </main>
 
-      <footer className="container mx-auto px-4 pb-8 text-xs text-gray-500 space-y-1 no-print">
+      <footer className="wca-wrap wca-credits no-print">
         {(window.STANDARDS_CREDITS || []).filter(c => c.key !== "NCAS").map(c => <p key={c.key}>{c.text}</p>)}
       </footer>
     </div>
