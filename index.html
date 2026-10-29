@@ -286,15 +286,88 @@ function gradeText(c) {
   return "Grades " + (consecutive ? g[0] + "–" + g[g.length - 1] : g.join(", "));
 }
 
-// Department statements line up with the Westminster statements by number.
-// English (8 statements) and Fine Arts (3 statements) don't follow that pattern,
-// so they have no automatic connection until a chair sets one.
-function westminsterCode(deptCode) {
-  const m = deptCode.match(/^([A-Z]+)-POG-(\d+)$/);
-  if (!m) return null;
-  if (m[1] === "ENG" || m[1] === "ART") return null;
-  const n = parseInt(m[2], 10);
-  return n >= 1 && n <= 7 ? "WCA-POG-" + n : null;
+// CONNECTIONS TO THE WESTMINSTER PORTRAIT
+// A department statement can grow from one or more of Westminster's seven statements. Until a
+// chair sets them, a department whose statements were written in the Portrait's order is connected
+// BY NUMBER (statement 3 to statement 3). English (8 statements) and Fine Arts (3) are not, so they
+// start with nothing and need a chair to set them on the Set Connections screen.
+// Only APPROVED connections are ever used by the outline and the family sheets.
+const CONNECTIONS = {};   // department -> { approved: {code: [WCA codes]}|null, approvedBy, approvedDate, proposal: {...}|null }
+let _deptOfCode = null;
+function deptOfCode(code) {
+  if (!_deptOfCode) {
+    _deptOfCode = {};
+    Object.keys(DEPARTMENT_PORTRAITS).forEach(d => DEPARTMENT_PORTRAITS[d].standards.forEach(st => { _deptOfCode[st.code] = d; }));
+  }
+  return _deptOfCode[code] || null;
+}
+function defaultConnections(dept) {
+  const p = DEPARTMENT_PORTRAITS[dept], out = {};
+  if (!p) return out;
+  p.standards.forEach(st => {
+    const m = st.code.match(/^([A-Z]+)-POG-(\d+)$/);
+    if (!m || m[1] === "ENG" || m[1] === "ART") return;
+    const n = parseInt(m[2], 10);
+    if (n >= 1 && n <= 7) out[st.code] = ["WCA-POG-" + n];
+  });
+  return out;
+}
+// Connect statement 1 to 1, 2 to 2 ... for ANY department (what "Fill in by number" does). Unlike
+// defaultConnections, this applies to English and Fine Arts too, as a starting point for a chair.
+function byNumberMap(dept) {
+  const p = DEPARTMENT_PORTRAITS[dept], out = {};
+  if (!p) return out;
+  p.standards.forEach(st => {
+    const m = st.code.match(/-POG-(\d+)$/);
+    const n = m ? parseInt(m[1], 10) : 0;
+    if (n >= 1 && n <= 7) out[st.code] = ["WCA-POG-" + n];
+  });
+  return out;
+}
+function cloneMap(m) { const o = {}; Object.keys(m || {}).forEach(k => { o[k] = (m[k] || []).slice(); }); return o; }
+function sameMap(a, b) {
+  const ka = Object.keys(a || {}).filter(k => (a[k] || []).length), kb = Object.keys(b || {}).filter(k => (b[k] || []).length);
+  if (ka.length !== kb.length) return false;
+  return ka.every(k => (b[k] || []).length === a[k].length && a[k].every(c => b[k].includes(c)));
+}
+function effectiveConnections(dept) {
+  const e = CONNECTIONS[dept];
+  return (e && e.approved) ? e.approved : defaultConnections(dept);
+}
+// Which Westminster statements does this department statement connect to? (approved only)
+function westminsterCodes(deptCode) {
+  const d = deptOfCode(deptCode);
+  return d ? (effectiveConnections(d)[deptCode] || []).slice() : [];
+}
+function westminsterCode(deptCode) { return westminsterCodes(deptCode)[0] || null; }   // older single-code callers
+// May connections be set for this department? Only once its portrait is real (complete or partly written).
+function connectionsOpen(dept) {
+  const p = DEPARTMENT_PORTRAITS[dept];
+  return !!p && (p.status === "complete" || p.status === "partial");
+}
+function connectionSummary(dept) {
+  const p = DEPARTMENT_PORTRAITS[dept], e = CONNECTIONS[dept] || {}, map = effectiveConnections(dept);
+  const stmts = p ? p.standards : [];
+  const covered = stmts.filter(st => (map[st.code] || []).length).length;
+  const used = {}; stmts.forEach(st => (map[st.code] || []).forEach(c => { used[c] = 1; }));
+  const gaps = WESTMINSTER_PORTRAIT.traits.map((t, i) => i + 1).filter(n => !used["WCA-POG-" + n]);
+  const hasDefault = Object.keys(defaultConnections(dept)).length > 0;
+  return { kind: e.approved ? "approved" : (hasDefault ? "default" : "none"),
+           total: stmts.length, covered: covered, gaps: gaps, proposal: e.proposal || null,
+           approvedBy: e.approvedBy || "", approvedDate: e.approvedDate || "" };
+}
+const todayIso = () => new Date().toISOString().slice(0, 10);
+function saveProposal(dept, map, status, by) {
+  const e = CONNECTIONS[dept] || (CONNECTIONS[dept] = { approved: null, proposal: null });
+  e.proposal = { map: cloneMap(map), status: status, by: by, date: todayIso(), note: "", sentBack: false };
+}
+function approveConnections(dept, map, by) {
+  const e = CONNECTIONS[dept] || (CONNECTIONS[dept] = { approved: null, proposal: null });
+  e.approved = cloneMap(map); e.approvedBy = by; e.approvedDate = todayIso(); e.proposal = null;
+}
+function sendBackConnections(dept, note) {
+  const e = CONNECTIONS[dept];
+  if (e && e.proposal) { e.proposal.status = "draft"; e.proposal.note = note; e.proposal.sentBack = true; }
 }
 
 const matchesCourse = function (s, c) {
@@ -1622,15 +1695,14 @@ function VerticalSection({ portrait, courseStandards, courseName }) {
       )}
       <div className="space-y-3">
         {statements.map(st => {
-          const wc = westminsterCode(st.code);
-          const trait = wc ? WESTMINSTER_PORTRAIT.traits.find(t => t.code === wc) : null;
+          const traits = westminsterCodes(st.code).map(c => WESTMINSTER_PORTRAIT.traits.find(t => t.code === c)).filter(Boolean);
           const aligned = courseStandards.filter(s => s.alignsTo.includes(st.code));
           return (
             <div key={st.code} className="avoid-break border border-gray-200 rounded-lg overflow-hidden">
-              <div className="px-3 py-2 bg-blue-50 text-sm text-gray-800">
-                {trait
-                  ? <><span className="font-semibold italic text-blue-900">Westminster:</span> {trait.description} <span className="text-blue-700 font-medium">({trait.code})</span></>
-                  : <><span className="font-semibold italic text-blue-900">Westminster:</span> <span className="italic text-gray-600">connection to be set by the department chair</span></>}
+              <div className="px-3 py-2 bg-blue-50 text-sm text-gray-800 space-y-1">
+                {traits.length
+                  ? traits.map(trait => <div key={trait.code}><span className="font-semibold italic text-blue-900">Westminster:</span> {trait.description} <span className="text-blue-700 font-medium">({trait.code})</span></div>)
+                  : <div><span className="font-semibold italic text-blue-900">Westminster:</span> <span className="italic text-gray-600">connection to be set by the department chair</span></div>}
               </div>
               <div className="px-3 py-2 bg-purple-50 text-sm text-gray-800">
                 <span className="font-semibold italic text-purple-900">Department:</span> {st.description} <span className="text-purple-700 font-medium">({st.code})</span>
@@ -1743,8 +1815,7 @@ function SameGradeSection({ course, courseStandards, standards }) {
 
   const ownCodes = [];
   courseStandards.forEach(s => s.alignsTo.forEach(code => {
-    const w = westminsterCode(code);
-    if (w && !ownCodes.includes(w)) ownCodes.push(w);
+    westminsterCodes(code).forEach(w => { if (!ownCodes.includes(w)) ownCodes.push(w); });
   }));
 
   const groups = Object.values(map).map(g => {
@@ -1752,8 +1823,8 @@ function SameGradeSection({ course, courseStandards, standards }) {
     const codes = [];
     let unmapped = 0;
     gs.forEach(s => s.alignsTo.forEach(code => {
-      const w = westminsterCode(code);
-      if (w) { if (!codes.includes(w)) codes.push(w); } else { unmapped++; }
+      const ws = westminsterCodes(code);
+      if (ws.length) { ws.forEach(w => { if (!codes.includes(w)) codes.push(w); }); } else { unmapped++; }
     }));
     codes.sort();
     return Object.assign({}, g, { count: gs.length, codes: codes, unmapped: unmapped });
@@ -1817,7 +1888,7 @@ function SameGradeSection({ course, courseStandards, standards }) {
         </table>
       </div>
       <p className="text-xs text-gray-500 mt-2">
-        Blue chips are Westminster statements that this course also connects to. Department statements are matched to Westminster statements by number; English and Fine Arts need a connection set by their chairs first.
+        Blue chips are Westminster statements that this course also connects to. Department statements connect to Westminster statements by number unless a chair has set them differently on the Set Connections screen.
       </p>
     </section>
   );
@@ -2039,7 +2110,7 @@ function OutlineView({ standards, units, onAddUnit, onAssignUnit, onApplyDraft, 
    ===================================================================== */
 function FamilySheetsView({ standards, portraits, west, courses, demo }) {
   const FS = window.FamilySheet;
-  const depts = FS ? FS.eligibleDepartments(portraits) : [];
+  const depts = FS ? FS.eligibleDepartments(portraits, westminsterCodes) : [];
   const ok = depts.filter(d => d.ok);
   const blocked = depts.filter(d => !d.ok);
   const [department, setDepartment] = useState(ok.some(d => d.name === "Mathematics") ? "Mathematics" : (ok[0] ? ok[0].name : ""));
@@ -2054,7 +2125,7 @@ function FamilySheetsView({ standards, portraits, west, courses, demo }) {
   const create = () => {
     try {
       const b = FS.build({ department: department, portrait: portraits[department], west: west, courses: courses,
-        standards: standards, family: family, grade: grade, count: parseInt(count, 10), demo: demo });
+        standards: standards, family: family, grade: grade, count: parseInt(count, 10), demo: demo, connect: westminsterCodes });
       setBuilt(b); setIdx(0); setError("");
     } catch (e) { setError(e.message); setBuilt(null); }
   };
@@ -2063,7 +2134,14 @@ function FamilySheetsView({ standards, portraits, west, courses, demo }) {
     const w = window.open("", "_blank");
     if (!w) { setError("Your browser blocked the print window. Allow pop-ups for this site, then try again."); return; }
     w.document.open(); w.document.write(built.html); w.document.close();
-    setTimeout(() => { try { if (w.__fitSheets) w.__fitSheets(); w.focus(); w.print(); } catch (e) {} }, 700);
+    setTimeout(() => {
+      try {
+        if (w.__fitSheets) w.__fitSheets();
+        const bad = Array.from(w.document.querySelectorAll(".page")).filter(pg => pg.getAttribute("data-fit") !== "ok").length;
+        if (bad) { w.close(); setError(bad + (bad === 1 ? " sheet does" : " sheets do") + " not fit on one page, so nothing was printed. Create new sheets and try again."); return; }
+        w.focus(); w.print();
+      } catch (e) {}
+    }, 700);
   };
   const srcDoc = useMemo(() => built ? built.one(idx) : "", [built, idx]);
   const n = built ? built.pages.length : 0;
@@ -2161,6 +2239,244 @@ function FamilySheetsView({ standards, portraits, west, courses, demo }) {
   );
 }
 
+/* =====================================================================
+   SET CONNECTIONS
+   Which of Westminster's seven Portrait statements does each department statement grow from?
+   Chairs set their own department's and submit it; principals and SuperAdmins can set any
+   department's and approve. Only approved connections are used anywhere else in the app.
+   ===================================================================== */
+const PORTRAIT_WORDS = { complete: "Complete", partial: "Partly written", empty: "Not written yet", placeholder: "Placeholder" };
+
+function ConnectionsOverview({ choices, onPick, active }) {
+  const FS = window.FamilySheet;
+  const label = (d) => {
+    const sm = connectionSummary(d), p = DEPARTMENT_PORTRAITS[d];
+    if (!connectionsOpen(d)) return { text: "Waiting on the portrait", tone: "text-gray-500" };
+    let t = sm.kind === "approved" ? "Approved" : sm.kind === "default" ? "By number" : "Not set";
+    if (sm.kind === "none" || sm.covered < sm.total) return { text: t + (sm.total ? " (" + sm.covered + " of " + sm.total + ")" : ""), tone: "text-red-700", pending: sm.proposal };
+    return { text: t, tone: "text-gray-800", pending: sm.proposal };
+  };
+  return (
+    <details open className="bg-white border border-gray-200 rounded-lg">
+      <summary className="cursor-pointer px-4 py-3 font-semibold text-gray-800">Where every department stands</summary>
+      <div className="overflow-x-auto px-4 pb-4">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-gray-600 border-b border-gray-200">
+              <th className="py-2 pr-3">Department</th><th className="py-2 pr-3">Portrait</th>
+              <th className="py-2 pr-3">Connections</th><th className="py-2">Family sheet</th>
+            </tr>
+          </thead>
+          <tbody>
+            {choices.map(d => {
+              const p = DEPARTMENT_PORTRAITS[d], l = label(d);
+              const el = FS ? FS.eligibility(d, p, westminsterCodes) : { ok: false, reason: "" };
+              return (
+                <tr key={d} className={"border-b border-gray-100 " + (d === active ? "bg-blue-50" : "")}>
+                  <td className="py-2 pr-3">
+                    <button onClick={() => onPick(d)} className="font-medium text-blue-700 hover:underline text-left">{d}</button>
+                  </td>
+                  <td className="py-2 pr-3 text-gray-700">{PORTRAIT_WORDS[p.status] || p.status}</td>
+                  <td className={"py-2 pr-3 " + l.tone}>
+                    {l.text}
+                    {l.pending && <span className={"wca-chip ml-2 " + (l.pending.status === "pending" ? "draft" : "gap")}>{l.pending.status === "pending" ? "Waiting for approval" : (l.pending.sentBack ? "Sent back" : "Draft")}</span>}
+                  </td>
+                  <td className="py-2">{el.ok ? <span className="wca-chip approved">Ready</span> : <span className="text-gray-500">Not yet</span>}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  );
+}
+
+function SetConnectionsView({ userRole, chairDepartment, currentUser, version, onChange }) {
+  const isApprover = userRole === "principal" || userRole === "superadmin";
+  const all = Object.keys(DEPARTMENT_PORTRAITS);
+  const choices = isApprover ? all : all.filter(d => d === chairDepartment);
+  const needsWork = (d) => { const sm = connectionSummary(d); return connectionsOpen(d) && (sm.covered < sm.total || (sm.proposal && sm.proposal.status === "pending")); };
+  const startMap = (d) => { const e = CONNECTIONS[d]; return cloneMap(e && e.proposal ? e.proposal.map : effectiveConnections(d)); };
+  const [picked, setPicked] = useState(choices.find(needsWork) || choices[0]);
+  const dept = choices.includes(picked) ? picked : choices[0];
+  const [work, setWork] = useState(() => startMap(dept));
+  const [msg, setMsg] = useState(null);
+  const [note, setNote] = useState("");
+  const [seen, setSeen] = useState(dept);
+  // switching department (or role) reloads the working copy
+  if (seen !== dept) { setSeen(dept); setWork(startMap(dept)); setMsg(null); setNote(""); }
+
+  const portrait = DEPARTMENT_PORTRAITS[dept];
+  const stmts = portrait.standards;
+  const sm = connectionSummary(dept);
+  const open = connectionsOpen(dept);
+  const canEdit = open && (isApprover || dept === chairDepartment);
+  const base = (CONNECTIONS[dept] && CONNECTIONS[dept].proposal) ? CONNECTIONS[dept].proposal.map : effectiveConnections(dept);
+  const dirty = !sameMap(work, base);
+  const missing = stmts.filter(st => !(work[st.code] || []).length);
+  const pend = sm.proposal;
+
+  const choose = (d) => {
+    if (d === dept) return;
+    if (dirty && !window.confirm("You have changes that are not saved. Switch department and lose them?")) return;
+    setPicked(d);
+  };
+  const toggle = (code, wca) => {
+    if (!canEdit) return;
+    setMsg(null);
+    setWork(prev => {
+      const cur = (prev[code] || []).slice(), i = cur.indexOf(wca);
+      if (i === -1) cur.push(wca); else cur.splice(i, 1);
+      return Object.assign({}, prev, { [code]: cur });
+    });
+  };
+  const fromNumbers = () => { setMsg(null); setWork(Object.assign({}, cloneMap(work), cloneMap(byNumberMap(dept)))); };
+  const clearAll = () => { setMsg(null); setWork({}); };
+  const ok = (text) => setMsg({ kind: "ok", text: text });
+  const bad = (text) => setMsg({ kind: "bad", text: text });
+
+  const saveDraft = () => { saveProposal(dept, work, "draft", currentUser); ok("Draft saved. It is not used anywhere yet."); onChange(); };
+  const submit = () => {
+    if (missing.length) return bad(missing.length + " statement" + (missing.length === 1 ? " has" : "s have") + " no connection yet. Choose at least one for each before submitting.");
+    saveProposal(dept, work, "pending", currentUser); ok("Submitted. A principal or the Head of Academic Development will review it."); onChange();
+  };
+  const saveApprove = () => {
+    if (missing.length) return bad(missing.length + " statement" + (missing.length === 1 ? " has" : "s have") + " no connection yet. Choose at least one for each before approving.");
+    approveConnections(dept, work, currentUser); ok("Approved. The outline and family sheets now use these connections."); onChange();
+  };
+  const approveSubmitted = () => {
+    const m = cloneMap(pend.map); approveConnections(dept, m, currentUser); setWork(m);
+    ok("Approved as submitted. The outline and family sheets now use these connections."); onChange();
+  };
+  const sendBack = () => {
+    sendBackConnections(dept, note.trim()); setNote(""); ok("Sent back to the chair" + (note.trim() ? " with your note." : ".")); onChange();
+  };
+
+  return (
+    <div className="space-y-6">
+      <SectionTitle title="Set connections"
+        subtitle="Choose which of Westminster’s seven Portrait statements each department statement grows from. One department statement can connect to more than one. Approved connections appear on the outline’s alignment views and decide whether a department can make a family sheet." />
+
+      {isApprover && <ConnectionsOverview choices={choices} onPick={choose} active={dept} />}
+
+      <div className="grid gap-4 sm:grid-cols-[18rem_1fr] items-start">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="cn-dept">Department</label>
+          <select id="cn-dept" value={dept} onChange={e => choose(e.target.value)} disabled={choices.length < 2}
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg">
+            {choices.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+          {!isApprover && <p className="text-xs text-gray-500 mt-1">Chairs set connections for their own department.</p>}
+        </div>
+        <div className="text-sm text-gray-700 pt-6">
+          {!open
+            ? <span>{portrait.status === "placeholder" ? "This portrait is a placeholder, not an approved one, so there is nothing to connect yet." : "This portrait has not been written yet, so there is nothing to connect. Once it is, connections can be set here."}</span>
+            : <span>
+                <span className={"wca-chip mr-2 " + (sm.kind === "none" ? "gap" : "approved")}>{sm.kind === "approved" ? "Approved connections" : sm.kind === "default" ? "Connected by number" : "Not connected yet"}</span>
+                {sm.covered} of {sm.total} statements connected.
+                {sm.kind === "approved" && sm.approvedBy ? " Approved by " + sm.approvedBy + (sm.approvedDate ? " on " + sm.approvedDate : "") + "." : ""}
+              </span>}
+        </div>
+      </div>
+
+      {open && (
+        <>
+          {pend && pend.status === "pending" && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 space-y-3">
+              <p className="text-sm text-gray-800"><b className="text-yellow-800">Waiting for approval.</b> Submitted by {pend.by} on {pend.date}. Until it is approved, the outline and family sheets keep using the current connections.</p>
+              {isApprover && (
+                <div className="space-y-2">
+                  <div className="flex gap-2 flex-wrap">
+                    <button onClick={approveSubmitted} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold">Approve as submitted</button>
+                  </div>
+                  <div className="flex gap-2 flex-wrap items-center">
+                    <input type="text" value={note} onChange={e => setNote(e.target.value)} aria-label="Note to the chair" placeholder="Note to the chair (optional)"
+                      className="flex-1 min-w-[14rem] px-3 py-2 border border-gray-300 rounded-lg" />
+                    <button onClick={sendBack} className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100">Send back</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          {pend && pend.status === "draft" && pend.sentBack && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm text-gray-800">
+              <b className="text-yellow-800">Sent back.</b> {pend.note ? "“" + pend.note + "”" : "Please review and submit again."}
+            </div>
+          )}
+
+          <div>
+            <h3 className="font-semibold text-gray-800 mb-2">Westminster’s Portrait of a Graduate</h3>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {WESTMINSTER_PORTRAIT.traits.map((t, i) => (
+                <div key={t.code} className="flex gap-2 items-start bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-sm text-gray-800">
+                  <span className="cn-dot on flex-none" aria-hidden="true">{i + 1}</span><span>{t.description}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+              <h3 className="font-semibold text-gray-800">{dept} portrait statements</h3>
+              {canEdit && (
+                <div className="flex gap-2 text-sm">
+                  <button onClick={fromNumbers} className="px-3 py-1.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100">Fill in by number</button>
+                  <button onClick={clearAll} className="px-3 py-1.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100">Clear all</button>
+                </div>
+              )}
+            </div>
+            <div className="space-y-2">
+              {stmts.map(st => {
+                const on = work[st.code] || [];
+                return (
+                  <div key={st.code} className={"rounded-lg p-3 border " + (on.length ? "bg-white border-gray-200" : "bg-yellow-50 border-yellow-300")}>
+                    <div className="flex gap-3 flex-wrap items-start justify-between">
+                      <div className="flex-1 min-w-[16rem]">
+                        <div className="text-xs font-semibold text-purple-700 mb-1">{st.code}</div>
+                        <p className="text-sm text-gray-800">{st.description}</p>
+                      </div>
+                      <div className="flex gap-1.5 items-center" role="group" aria-label={"Westminster statements that " + st.code + " grows from"}>
+                        {WESTMINSTER_PORTRAIT.traits.map((t, i) => (
+                          <button key={t.code} type="button" onClick={() => toggle(st.code, t.code)} disabled={!canEdit}
+                            aria-pressed={on.includes(t.code)} title={t.description}
+                            aria-label={st.code + " connects to Westminster statement " + (i + 1) + ": " + t.description}
+                            className={"cn-dot" + (on.includes(t.code) ? " on" : "")}>{i + 1}</button>
+                        ))}
+                      </div>
+                    </div>
+                    {!on.length && <p className="text-xs text-yellow-800 mt-2">Not connected yet. Choose at least one.</p>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {(() => {
+            const used = {}; stmts.forEach(st => (work[st.code] || []).forEach(c => { used[c] = 1; }));
+            const gaps = WESTMINSTER_PORTRAIT.traits.map((t, i) => i + 1).filter(n => !used["WCA-POG-" + n]);
+            return gaps.length > 0 && gaps.length < 7 ? (
+              <p className="text-sm text-gray-600">No {dept} statement connects to Westminster statement{gaps.length === 1 ? "" : "s"} {gaps.join(", ")}. That can be exactly right, but it is worth a conversation.</p>
+            ) : null;
+          })()}
+
+          {canEdit && (
+            <div className="flex gap-3 flex-wrap items-center">
+              {isApprover
+                ? <><button onClick={saveApprove} className="px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold">Save and approve</button>
+                    <button onClick={saveDraft} disabled={!dirty} className="px-4 py-2.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100 disabled:opacity-40">Save as draft</button></>
+                : <><button onClick={submit} className="px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold">Submit for approval</button>
+                    <button onClick={saveDraft} disabled={!dirty} className="px-4 py-2.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100 disabled:opacity-40">Save draft</button></>}
+              {dirty && <span className="text-sm text-gray-500">You have changes that are not saved yet.</span>}
+            </div>
+          )}
+          {msg && <p role={msg.kind === "bad" ? "alert" : "status"} className={"text-sm " + (msg.kind === "bad" ? "text-red-700" : "text-gray-800")}>{msg.text}</p>}
+        </>
+      )}
+    </div>
+  );
+}
+
 function NavButton({ active, onClick, icon, children }) {
   return (
     <button onClick={onClick} aria-current={active ? "page" : undefined}
@@ -2175,7 +2491,9 @@ function App() {
   const [userRole, setUserRole] = useState("teacher");
   // Family Sheets belong to principals and SuperAdmins; anyone else is sent back to the outline.
   const canSheets = userRole === "principal" || userRole === "superadmin";
-  const effectiveView = (view === "sheets" && !canSheets) ? "outline" : view;
+  const canConnect = userRole === "chair" || userRole === "principal" || userRole === "superadmin";
+  const [connVersion, setConnVersion] = useState(0);        // bumps when a connection changes, so every screen redraws
+  const effectiveView = ((view === "sheets" && !canSheets) || (view === "connections" && !canConnect)) ? "outline" : view;
   const [standards, setStandards] = useState(SAMPLE_STANDARDS);
   const [units, setUnits] = useState({
     [courseKey("Middle School", "Mathematics", "Algebra 1")]: ["Unit 1: Linear Equations", "Unit 2: Factoring and Quadratics"]
@@ -2277,6 +2595,7 @@ function App() {
             <NavButton active={effectiveView === "outline"} onClick={() => setView("outline")} icon="target">Course Outlines</NavButton>
             <NavButton active={effectiveView === "create"} onClick={() => setView("create")} icon="plus">Create Standard</NavButton>
             <NavButton active={effectiveView === "browse"} onClick={() => setView("browse")} icon="book">Browse Standards</NavButton>
+            {canConnect && <NavButton active={effectiveView === "connections"} onClick={() => setView("connections")} icon="edit">Set Connections</NavButton>}
             {canSheets && <NavButton active={effectiveView === "sheets"} onClick={() => setView("sheets")} icon="users">Family Sheets</NavButton>}
           </div>
         </div>
@@ -2292,6 +2611,7 @@ function App() {
         )}
         {effectiveView === "create" && <CreateStandardView standards={standards} units={units} onSave={addStandard} onAddUnit={addUnit} currentUser={DEMO_USER} />}
         {effectiveView === "outline" && <OutlineView standards={standards} units={units} onAddUnit={addUnit} onAssignUnit={assignUnit} onApplyDraft={applyEasyDraft} onRenameUnit={renameUnit} />}
+        {effectiveView === "connections" && <SetConnectionsView key={userRole} userRole={userRole} chairDepartment={DEMO_CHAIR_DEPARTMENT} currentUser={DEMO_USER} version={connVersion} onChange={() => setConnVersion(v => v + 1)} />}
         {effectiveView === "sheets" && <FamilySheetsView standards={standards} portraits={DEPARTMENT_PORTRAITS} west={WESTMINSTER_PORTRAIT} courses={COURSES} demo={IS_DEMO_DATA} />}
       </main>
 

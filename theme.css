@@ -179,3 +179,16 @@ body [class*="bg-black/50"] { background: rgba(22, 35, 59, .42); }
   .wca-pill.small { height: 30px; padding: 0 10px; font-size: 12px; }
   .wca-main { padding-top: 18px; }
 }
+
+/* ---- Set Connections: the numbered toggles ------------------------------- */
+.cn-dot {
+  width: 34px; height: 34px; border-radius: 50%;
+  border: 1.5px solid var(--line); background: #fff; color: var(--muted);
+  font: inherit; font-size: 13px; font-weight: 800; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.cn-dot:hover:not(:disabled) { border-color: var(--blue); color: var(--blue); }
+.cn-dot.on { background: var(--blue); border-color: var(--blue); color: #fff; }
+.cn-dot:disabled { cursor: default; opacity: .75; }
+.wca-chip.gap { background: #FDECEC; color: #B93A36; }

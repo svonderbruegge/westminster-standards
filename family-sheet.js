@@ -38,29 +38,52 @@
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
     });
   }
-  function boldKey(text, i) {
-    var t = esc(text), m = t.match(KEYS[i]);
-    return m ? t.replace(m[0], "<b>" + m[0] + "</b>") : t;
+  function boldKey(text) {
+    var t = esc(text), head = t.slice(0, 80);
+    for (var k = 0; k < KEYS.length; k++) {
+      var m = head.match(KEYS[k]);
+      if (m) return t.replace(m[0], "<b>" + m[0] + "</b>");
+    }
+    return t;
   }
   function tidyEllipsis(s) { return String(s || "").replace(/\.\.\./g, "\u2026"); }
 
+  /* ---------- connections to the Westminster Portrait ----------
+     A function from a department statement code to a list of Westminster codes ("WCA-POG-3").
+     The app supplies the real one (by number unless a chair has set it differently, and only
+     approved connections count). This is the by-number fallback for use on its own. */
+  function numberConnect(code) {
+    var m = String(code).match(/^([A-Z]+)-POG-(\d+)$/);
+    if (!m || m[1] === "ENG" || m[1] === "ART") return [];
+    var n = parseInt(m[2], 10);
+    return n >= 1 && n <= 7 ? ["WCA-POG-" + n] : [];
+  }
+  function westNum(code) { return parseInt(String(code).split("-").pop(), 10); }
+
   /* ---------- who may have a sheet ---------- */
-  function eligibility(name, portrait) {
+  function eligibility(name, portrait, connect) {
+    connect = connect || numberConnect;
     if (!portrait) return { ok: false, reason: "No portrait on file." };
     var st = portrait.status;
     if (st === "empty") return { ok: false, reason: "Its portrait has not been written yet." };
     if (st === "placeholder") return { ok: false, reason: "Its portrait is a placeholder, not an approved one." };
     if (st === "partial") return { ok: false, reason: portrait.partialNote || "Its portrait is only partly written." };
     if (st !== "complete") return { ok: false, reason: "Its portrait is not marked complete." };
-    var n = (portrait.standards || []).length;
-    if (n !== 7) return { ok: false, reason: "It has " + n + " portrait statements, so its chair needs to set the connections to the Westminster Portrait first." };
-    var open = portrait.standards.filter(function (s) { return /\.\.\.\s*$/.test(s.description); });
-    if (open.length) return { ok: false, reason: "Some of its portrait statements are still only prompts." };
+    var stmts = portrait.standards || [];
+    if (stmts.length < 3) return { ok: false, reason: "It has only " + stmts.length + " portrait statements." };
+    var open = stmts.filter(function (s) { return /\.\.\.|\u2026/.test(s.description); });
+    if (open.length) return { ok: false, reason: "Some of its portrait statements are unfinished (they still contain \u201C...\u201D)." };
+    var none = stmts.filter(function (s) { return !(connect(s.code) || []).length; });
+    if (none.length) {
+      return { ok: false, reason: (none.length === stmts.length ? "None of its portrait statements are" :
+        none.length + " of its " + stmts.length + " portrait statements are not") +
+        " connected to the Westminster Portrait yet. Its chair can set them on the Set Connections screen." };
+    }
     return { ok: true, reason: "" };
   }
-  function eligibleDepartments(portraits) {
+  function eligibleDepartments(portraits, connect) {
     return Object.keys(portraits).map(function (name) {
-      var e = eligibility(name, portraits[name]);
+      var e = eligibility(name, portraits[name], connect);
       return { name: name, ok: e.ok, reason: e.reason };
     });
   }
@@ -115,40 +138,53 @@
 
   /* ---------- plan one sheet (pure: same seed, same sheet) ---------- */
   function plan(o, seed) {
-    var r = rng(seed);
-    var portrait = o.portrait, stmts = portrait.standards;
-    var code = function (i) { return stmts[i].code; };
+    var r = rng(seed), connect = o.connect || numberConnect;
+    var portrait = o.portrait, stmts = portrait.standards, N = stmts.length;
+    var westText = function (c) {
+      var t = o.west.traits.filter(function (x) { return x.code === c; })[0];
+      return t ? t.description : "";
+    };
+    var wests = function (i) {
+      return connect(stmts[i].code).slice().sort(function (a, b) { return westNum(a) - westNum(b); }).slice(0, 2)
+        .map(function (c) { return { num: westNum(c), text: westText(c) }; });
+    };
 
     /* approved standards of this department, and which statements they trace to */
     var approved = (o.standards || []).filter(function (s) {
       return s.department === o.department && s.status === "approved";
     });
-    var byStmt = [];
-    for (var i = 0; i < 7; i++) {
-      byStmt.push(approved.filter(function (s) { return (s.alignsTo || []).indexOf(code(i)) !== -1; }));
+    var byStmt = [], all = [];
+    for (var i = 0; i < N; i++) {
+      all.push(i);
+      byStmt.push(approved.filter(function (s) { return (s.alignsTo || []).indexOf(stmts[i].code) !== -1; }));
     }
     var haveClass = []; byStmt.forEach(function (list, i) { if (list.length) haveClass.push(i); });
 
-    var threads = [], mode;
+    var threads = [], mode = "pairs";
     if (haveClass.length >= 2) {
-      mode = "class";
-      var chosen = shuffle(r, haveClass).slice(0, 3).sort(function (a, b) { return a - b; });
-      var usedCourse = {};
-      chosen.forEach(function (i) {
-        var pool = byStmt[i].filter(function (s) { return !usedCourse[s.course]; });
-        var s = pick(r, pool.length ? pool : byStmt[i]);
-        usedCourse[s.course] = 1;
-        threads.push({ n: i + 1, west: o.west.traits[i].description, dept: stmts[i].description,
+      /* never show the same example twice, or two examples from the same course if there is a choice */
+      var usedStd = {}, usedCourse = {};
+      shuffle(r, haveClass).forEach(function (i) {
+        if (threads.length >= 3) return;
+        var pool = byStmt[i].filter(function (s) { return !usedStd[s.id]; });
+        if (!pool.length) return;
+        var fresh = pool.filter(function (s) { return !usedCourse[s.course]; });
+        var s = pick(r, fresh.length ? fresh : pool);
+        usedStd[s.id] = 1; usedCourse[s.course] = 1;
+        threads.push({ n: i + 1, wests: wests(i), dept: stmts[i].description,
                        course: s.course, std: s.description, sid: s.id });
       });
-    } else {
-      mode = "pairs";
-      shuffle(r, [0, 1, 2, 3, 4, 5, 6]).slice(0, 3).sort(function (a, b) { return a - b; }).forEach(function (i) {
-        threads.push({ n: i + 1, west: o.west.traits[i].description, dept: stmts[i].description });
+      threads.sort(function (a, b) { return a.n - b.n; });
+      if (threads.length >= 2) mode = "class";
+    }
+    if (mode === "pairs") {
+      threads = [];
+      shuffle(r, all).slice(0, 3).sort(function (a, b) { return a - b; }).forEach(function (i) {
+        threads.push({ n: i + 1, wests: wests(i), dept: stmts[i].description });
       });
     }
 
-    var hero = Math.floor(r() * 7);
+    var hero = Math.floor(r() * N);
     return {
       seed: seed >>> 0,
       id: sheetId(seed),
@@ -182,6 +218,10 @@
   }
   var ARROW = '<svg viewBox="0 0 24 24"><path d="m9 5 7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
+  function westNode(wests) {
+    if (wests.length === 1) return esc(wests[0].text);
+    return wests.map(function (w) { return '<div class="w"><b class="wn">' + w.num + "</b> " + esc(w.text) + "</div>"; }).join("");
+  }
   function titleSize(name) { return name.length > 24 ? 22 : name.length > 15 ? 28 : 35; }
 
   function pageHtml(o, p) {
@@ -200,20 +240,29 @@
         '<div class="kicker">' + kicker + "</div></div>" +
         '<div class="title" style="font-size:calc(' + titleSize(d) + 'pt * var(--s))">' + esc(d) + "</div>" +
         '<div class="tag"><i>' + esc(tag) + "</i></div></div>" +
-      '<div class="hero"><div class="q">\u201C</div><p>' + boldKey(stmts[p.hero].description, p.hero) + "</p>" +
+      '<div class="hero"><div class="q">\u201C</div><p>' + boldKey(stmts[p.hero].description) + "</p>" +
       '<div class="src">' + esc(d) + " Portrait of a Graduate</div></div></div>";
 
     /* the seven statements */
+    var connect = o.connect || numberConnect;
+    var nums = function (i) {
+      var n = connect(stmts[i].code).map(westNum).filter(function (x) { return x >= 1 && x <= 7; })
+        .sort(function (a, b) { return a - b; });
+      return n.length ? n : [Math.min(i + 1, 7)];
+    };
     var tiles = stmts.map(function (s, i) {
-      return '<div class="tile' + (i === p.hero ? " hot" : "") + '"><div class="n">' + (i + 1) + "</div>" +
-             '<div class="icw' + (p.solidIcons ? " solid" : "") + '">' + icon(i + 1) + "</div><p>" +
-             boldKey(s.description, i) + "</p></div>";
+      var nm = nums(i);
+      return '<div class="tile' + (i === p.hero ? " hot" : "") + '"><div class="n">' + nm.join("\u00b7") + "</div>" +
+             '<div class="icw' + (p.solidIcons ? " solid" : "") + '">' + icon(nm[0]) + "</div><p>" +
+             boldKey(s.description) + "</p></div>";
     });
-    var note = '<div class="tile note"><div class="label">How to read this</div><p>' +
-      "Westminster\u2019s Portrait of a Graduate describes the person we hope every student becomes. " +
-      "These seven statements show how that Portrait comes to life in " + esc(d) + ".</p></div>";
-    if (p.noteFirst) tiles.unshift(note); else tiles.push(note);
+    var noteText = "Westminster\u2019s Portrait of a Graduate describes the person we hope every student becomes. " +
+      "Each statement here grows from one or more of its seven statements, shown by number.";
+    var showNote = stmts.length + 1 <= 8;      // a ninth tile would cost a whole row
+    var note = '<div class="tile note"><div class="label">How to read this</div><p>' + noteText + "</p></div>";
+    if (showNote) { if (p.noteFirst) tiles.unshift(note); else tiles.push(note); }
     var secTiles = '<div class="sec s-tiles"><h2>Who our ' + esc(d) + " graduates become</h2>" +
+      (showNote ? "" : '<div class="sub">' + noteText + "</div>") +
       '<div class="tiles">' + tiles.join("") + "</div></div>";
 
     /* threads */
@@ -227,7 +276,7 @@
       (cls ? '<span></span><div class="col-l"><span class="dot" style="background:var(--navy)"></span><span class="label">What they do in class</span></div>' : "") +
       "</div>" +
       p.threads.map(function (t) {
-        return '<div class="thread ' + cols + '"><div class="node n1">' + esc(t.west) + '</div><div class="arrow">' + ARROW + "</div>" +
+        return '<div class="thread ' + cols + '"><div class="node n1">' + westNode(t.wests) + '</div><div class="arrow">' + ARROW + "</div>" +
                '<div class="node n2">' + esc(t.dept) + "</div>" +
                (cls ? '<div class="arrow">' + ARROW + '</div><div class="node n3"><span class="course">' + esc(t.course) + "</span><br>" + esc(t.std) + "</div>" : "") +
                "</div>";
@@ -251,7 +300,18 @@
         path += '<div class="ms' + (g && g <= 8 ? " here" : (g >= 9 ? " before" : "")) + '"><span class="label">Middle School</span>' +
           ms.map(function (r) { return '<span class="pill">' + esc(r.name) + chips(r) + "</span>"; }).join("") + "</div>";
       }
-      if (us.length) {
+      if (us.length && us.length > 12) {
+        /* many courses: list each once, under the first grade it is offered */
+        var chip = function (r) {
+          var past = g >= 9 && r.grades[r.grades.length - 1] < g;
+          return '<span class="cchip' + (past ? " past" : "") + '">' + esc(r.name) + chips(r) + "</span>";
+        };
+        path += '<div class="cpath">' + [9, 10, 11, 12].map(function (n) {
+          return '<div class="cp-col"><div class="cp-h' + (g === n ? " start" : "") + '">Open from grade ' + n + (g === n ? " &middot; start" : "") + "</div>" +
+                 us.filter(function (r) { return r.grades[0] === n; }).map(chip).join("") + "</div>";
+        }).join("") + "</div>" +
+        '<div class="sub" style="margin-top:.04in; font-size:calc(6.8pt * var(--s))">Each course is listed in the first grade it is offered. Fund = Fundamentals &middot; Trad = Traditional &middot; Hon = Honors &middot; AP = Advanced Placement</div>';
+      } else if (us.length) {
         path += '<div class="chart"><div class="row h"><span>Upper School</span>' +
           [9, 10, 11, 12].map(function (n) { return "<span" + (g === n ? ' class="start"' : "") + ">Grade " + n + (g === n ? " &middot; start" : "") + "</span>"; }).join("") + "</div>" +
           us.map(function (r) {
@@ -302,7 +362,7 @@
     ".tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:.085in;margin-top:.07in}",
     ".tile{background:#fff;border:1px solid var(--line);border-radius:12px;padding:.09in .11in .08in;position:relative;min-height:.94in}",
     ".tile.hot{border-color:var(--num);box-shadow:0 0 0 1px var(--num) inset}",
-    ".tile .n{width:.24in;height:.24in;border-radius:50%;background:var(--num);color:#fff;font-weight:800;font-size:" + pt(8.5) + ";display:flex;align-items:center;justify-content:center}",
+    ".tile .n{min-width:.24in;width:fit-content;height:.24in;padding:0 .07in;border-radius:99px;background:var(--num);color:#fff;font-weight:800;font-size:" + pt(8.5) + ";display:flex;align-items:center;justify-content:center;letter-spacing:.02em}",
     ".icw{position:absolute;top:.08in;right:.09in;width:.27in;height:.27in;color:var(--ic);display:flex;align-items:center;justify-content:center}.icw .ic{width:100%;height:100%}",
     ".icw.solid{background:var(--sky-soft);border-radius:50%;padding:.045in}",
     ".tile p{margin:.05in 0 0;font-size:" + pt(7.5) + ";line-height:1.38;color:#1B3B63}",
@@ -312,6 +372,7 @@
     ".thread{display:grid;align-items:stretch;margin-bottom:.05in}",
     ".node{border-radius:10px;padding:.055in .09in;font-size:" + pt(7.3) + ";line-height:1.36;border:1px solid;color:#1B3B63}",
     ".n1{background:var(--blue-soft);border-color:var(--blue-line)}.n2{background:var(--sky-soft);border-color:var(--sky-line)}.n3{background:#fff;border-color:var(--line);border-left:4px solid var(--navy)}",
+    ".node .w + .w{margin-top:3px}.node .wn{display:inline-block;min-width:.15in;text-align:center;background:var(--blue);color:#fff;border-radius:99px;font-size:" + pt(6) + ";padding:0 3px;margin-right:2px}",
     ".arrow{display:flex;align-items:center;justify-content:center;color:var(--sky-deep)}.arrow svg{width:.17in;height:.17in}",
     ".course{display:inline-block;font-size:" + pt(6.3) + ";font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--navy);background:var(--steel-soft);border-radius:99px;padding:1.5px 7px;margin-bottom:3px}",
     ".ms{display:flex;align-items:center;flex-wrap:wrap;gap:.04in;margin:.05in 0 .06in}.ms .label{margin-right:.06in;color:var(--blue)}.ms.before{opacity:.45}",
@@ -324,6 +385,9 @@
     ".row.h{background:var(--paper);min-height:.2in}.row.h span{font-size:" + pt(6.6) + ";font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding:0 .08in}.row.h span.start{color:var(--blue)}",
     ".row.past{opacity:.38}.row .nm{font-size:" + pt(7.6) + ";font-weight:700;padding:0 .09in;color:var(--navy)}",
     ".bar{height:.125in;margin:0 .035in;border-radius:99px;background:var(--sky-soft);border:1px solid var(--sky-line);display:flex;align-items:center;gap:2px;padding:0 .04in;overflow:hidden;white-space:nowrap}.bar .lv{margin-left:0}",
+    ".cpath{display:grid;grid-template-columns:repeat(4,1fr);gap:.07in}.cp-col{border:1px solid var(--line);border-radius:10px;padding:.06in .07in}",
+    ".cp-h{font-size:" + pt(6.6) + ";font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:.05in}.cp-h.start{color:var(--blue)}",
+    ".cchip{display:inline-block;font-size:" + pt(7) + ";font-weight:700;color:var(--blue);background:var(--blue-soft);border:1px solid var(--blue-line);border-radius:99px;padding:1px 7px;margin:0 3px 3px 0}.cchip.past{opacity:.38}",
     ".foot{margin-top:auto;display:flex;align-items:flex-end;justify-content:space-between;padding-top:.08in;border-top:1px solid var(--line);font-size:" + pt(6.6) + ";color:var(--muted)}",
     ".fl{display:flex;flex-direction:column;gap:2px}.wm{font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:var(--navy)}.vid{letter-spacing:.06em;font-size:" + pt(5.8) + "}",
     ".sig{display:flex;flex-direction:column;align-items:flex-start}.sline{display:flex;align-items:flex-end;gap:5px;white-space:nowrap}",
@@ -348,9 +412,9 @@
 
   /* ---------- build: one sheet, or a stack of different ones ---------- */
   function build(o) {
-    var elig = eligibility(o.department, o.portrait);
+    o = Object.assign({ signer: SIGNER, count: 1, connect: numberConnect }, o);
+    var elig = eligibility(o.department, o.portrait, o.connect);
     if (!elig.ok) throw new Error(elig.reason);
-    o = Object.assign({ signer: SIGNER, count: 1 }, o);
     if (window.FAMILY_SHEET_SIGNER) o.signer = window.FAMILY_SHEET_SIGNER;
     var n = Math.max(1, Math.min(50, parseInt(o.count, 10) || 1));
     var plans = [], seen = {};
@@ -371,6 +435,6 @@
 
   window.FamilySheet = {
     eligibility: eligibility, eligibleDepartments: eligibleDepartments, build: build,
-    plan: plan, pageHtml: pageHtml, documentHtml: documentHtml, variantKey: variantKey, sheetId: sheetId, seedFromId: seedFromId, SIGNER: SIGNER
+    plan: plan, numberConnect: numberConnect, pageHtml: pageHtml, documentHtml: documentHtml, variantKey: variantKey, sheetId: sheetId, seedFromId: seedFromId, SIGNER: SIGNER
   };
 })();
