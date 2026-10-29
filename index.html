@@ -17,6 +17,7 @@
 <script src="standards-bank-history-add.js"></script>
 <script src="standards-bank-science-add.js"></script>
 <script src="standards-credits.js"></script>
+<script src="chair-worksheet.js"></script>
 <script src="family-sheet.js"></script>
 <script src="easy-button.js"></script>
 <style>
@@ -2247,8 +2248,10 @@ function FamilySheetsView({ standards, portraits, west, courses, demo }) {
    ===================================================================== */
 const PORTRAIT_WORDS = { complete: "Complete", partial: "Partly written", empty: "Not written yet", placeholder: "Placeholder" };
 
-function ConnectionsOverview({ choices, onPick, active }) {
+function ConnectionsOverview({ choices, onPick, active, onPrint }) {
   const FS = window.FamilySheet;
+  const CW = window.ChairWorksheet;
+  const gaps = CW ? choices.filter(d => !CW.needs(d, DEPARTMENT_PORTRAITS[d], westminsterCodes).ready) : [];
   const label = (d) => {
     const sm = connectionSummary(d), p = DEPARTMENT_PORTRAITS[d];
     if (!connectionsOpen(d)) return { text: "Waiting on the portrait", tone: "text-gray-500" };
@@ -2259,12 +2262,20 @@ function ConnectionsOverview({ choices, onPick, active }) {
   return (
     <details open className="bg-white border border-gray-200 rounded-lg">
       <summary className="cursor-pointer px-4 py-3 font-semibold text-gray-800">Where every department stands</summary>
+      {gaps.length > 0 && (
+        <div className="px-4 pb-3 flex items-center gap-3 flex-wrap">
+          <button onClick={() => onPrint(gaps)} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold text-sm">
+            Print worksheets for the {gaps.length} department{gaps.length === 1 ? "" : "s"} with gaps
+          </button>
+          <span className="text-xs text-gray-500">One page each, showing exactly what that chair still needs to do.</span>
+        </div>
+      )}
       <div className="overflow-x-auto px-4 pb-4">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-gray-600 border-b border-gray-200">
               <th className="py-2 pr-3">Department</th><th className="py-2 pr-3">Portrait</th>
-              <th className="py-2 pr-3">Connections</th><th className="py-2">Family sheet</th>
+              <th className="py-2 pr-3">Connections</th><th className="py-2 pr-3">Family sheet</th><th className="py-2">Worksheet</th>
             </tr>
           </thead>
           <tbody>
@@ -2281,7 +2292,8 @@ function ConnectionsOverview({ choices, onPick, active }) {
                     {l.text}
                     {l.pending && <span className={"wca-chip ml-2 " + (l.pending.status === "pending" ? "draft" : "gap")}>{l.pending.status === "pending" ? "Waiting for approval" : (l.pending.sentBack ? "Sent back" : "Draft")}</span>}
                   </td>
-                  <td className="py-2">{el.ok ? <span className="wca-chip approved">Ready</span> : <span className="text-gray-500">Not yet</span>}</td>
+                  <td className="py-2 pr-3">{el.ok ? <span className="wca-chip approved">Ready</span> : <span className="text-gray-500">Not yet</span>}</td>
+                  <td className="py-2">{gaps.includes(d) ? <button onClick={() => onPrint([d])} className="text-blue-700 hover:underline font-medium">Print</button> : <span className="text-gray-400">None needed</span>}</td>
                 </tr>
               );
             })}
@@ -2335,6 +2347,24 @@ function SetConnectionsView({ userRole, chairDepartment, currentUser, version, o
   const clearAll = () => { setMsg(null); setWork({}); };
   const ok = (text) => setMsg({ kind: "ok", text: text });
   const bad = (text) => setMsg({ kind: "bad", text: text });
+  const CW = window.ChairWorksheet;
+  const hasGap = !!CW && !CW.needs(dept, portrait, westminsterCodes).ready;
+  const printWorksheets = (names) => {
+    if (!CW) { bad("The worksheet file did not load. Make sure chair-worksheet.js is uploaded next to index.html."); return; }
+    const r = CW.build(names, { portraits: DEPARTMENT_PORTRAITS, west: WESTMINSTER_PORTRAIT, connect: westminsterCodes });
+    if (!r.pages.length) { bad("Nothing to print. " + (names.length === 1 ? names[0] + " has no gaps." : "None of those departments have gaps.")); return; }
+    const w = window.open("", "_blank");
+    if (!w) { bad("Your browser blocked the print window. Allow pop-ups for this site, then try again."); return; }
+    w.document.open(); w.document.write(r.html); w.document.close();
+    setTimeout(() => {
+      try {
+        if (w.__fitSheets) w.__fitSheets();
+        const over = Array.from(w.document.querySelectorAll(".page")).filter(pg => pg.getAttribute("data-fit") !== "ok").length;
+        if (over) { w.close(); bad(over + (over === 1 ? " worksheet does" : " worksheets do") + " not fit on one page, so nothing was printed."); return; }
+        w.focus(); w.print();
+      } catch (e) {}
+    }, 700);
+  };
 
   const saveDraft = () => { saveProposal(dept, work, "draft", currentUser); ok("Draft saved. It is not used anywhere yet."); onChange(); };
   const submit = () => {
@@ -2358,7 +2388,7 @@ function SetConnectionsView({ userRole, chairDepartment, currentUser, version, o
       <SectionTitle title="Set connections"
         subtitle="Choose which of Westminster’s seven Portrait statements each department statement grows from. One department statement can connect to more than one. Approved connections appear on the outline’s alignment views and decide whether a department can make a family sheet." />
 
-      {isApprover && <ConnectionsOverview choices={choices} onPick={choose} active={dept} />}
+      {isApprover && <ConnectionsOverview choices={choices} onPick={choose} active={dept} onPrint={printWorksheets} />}
 
       <div className="grid gap-4 sm:grid-cols-[18rem_1fr] items-start">
         <div>
@@ -2379,6 +2409,16 @@ function SetConnectionsView({ userRole, chairDepartment, currentUser, version, o
               </span>}
         </div>
       </div>
+
+      {hasGap && (
+        <div className="flex items-center gap-3 flex-wrap no-print">
+          <button onClick={() => printWorksheets([dept])} className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100 font-medium text-sm">
+            Print worksheet for {dept}
+          </button>
+          <span className="text-xs text-gray-500">A one-page sheet showing what {dept} still needs.</span>
+        </div>
+      )}
+      {msg && !open && <p role={msg.kind === "bad" ? "alert" : "status"} className={"text-sm " + (msg.kind === "bad" ? "text-red-700" : "text-gray-800")}>{msg.text}</p>}
 
       {open && (
         <>
