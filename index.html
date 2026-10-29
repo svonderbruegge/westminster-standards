@@ -2489,6 +2489,8 @@ function NavButton({ active, onClick, icon, children }) {
 function App() {
   const [view, setView] = useState("outline");
   const [userRole, setUserRole] = useState("teacher");
+  // Demo only: which department the "Department Chair" role belongs to (real sign-in will supply this).
+  const [chairDept, setChairDept] = useState(DEMO_CHAIR_DEPARTMENT);
   // Family Sheets belong to principals and SuperAdmins; anyone else is sent back to the outline.
   const canSheets = userRole === "principal" || userRole === "superadmin";
   const canConnect = userRole === "chair" || userRole === "principal" || userRole === "superadmin";
@@ -2561,7 +2563,7 @@ function App() {
 
   const roles = [
     ["teacher", "Teacher"],
-    ["chair", "Department Chair (" + DEMO_CHAIR_DEPARTMENT + ")"],
+    ["chair", "Department Chair (" + chairDept + ")"],
     ["principal", "Principal"],
     ["superadmin", "SuperAdmin"]
   ];
@@ -2586,6 +2588,14 @@ function App() {
                 className={"wca-pill small" + (userRole === value ? " on" : "")}>{label}</button>
             ))}
           </span>
+          {userRole === "chair" && (
+            <label className="wca-chairrow">
+              <span>Previewing as the chair of</span>
+              <select value={chairDept} onChange={e => setChairDept(e.target.value)} aria-label="Which department's chair">
+                {DEPT_ORDER.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </label>
+          )}
         </div>
       </div>
 
@@ -2604,14 +2614,14 @@ function App() {
       <main className="wca-wrap wca-main">
         {effectiveView === "browse" && (
           <BrowseView standards={standards} onApprove={approve} onReject={reject}
-            userRole={userRole} currentUser={DEMO_USER} chairDepartment={DEMO_CHAIR_DEPARTMENT}
+            userRole={userRole} currentUser={DEMO_USER} chairDepartment={chairDept}
             school={school} setSchool={setSchool} department={department} setDepartment={setDepartment}
             course={course} setCourse={setCourse} searchTerm={searchTerm} setSearchTerm={setSearchTerm}
             statusFilter={statusFilter} setStatusFilter={setStatusFilter} />
         )}
         {effectiveView === "create" && <CreateStandardView standards={standards} units={units} onSave={addStandard} onAddUnit={addUnit} currentUser={DEMO_USER} />}
         {effectiveView === "outline" && <OutlineView standards={standards} units={units} onAddUnit={addUnit} onAssignUnit={assignUnit} onApplyDraft={applyEasyDraft} onRenameUnit={renameUnit} />}
-        {effectiveView === "connections" && <SetConnectionsView key={userRole} userRole={userRole} chairDepartment={DEMO_CHAIR_DEPARTMENT} currentUser={DEMO_USER} version={connVersion} onChange={() => setConnVersion(v => v + 1)} />}
+        {effectiveView === "connections" && <SetConnectionsView key={userRole + ":" + chairDept} userRole={userRole} chairDepartment={chairDept} currentUser={DEMO_USER} version={connVersion} onChange={() => setConnVersion(v => v + 1)} />}
         {effectiveView === "sheets" && <FamilySheetsView standards={standards} portraits={DEPARTMENT_PORTRAITS} west={WESTMINSTER_PORTRAIT} courses={COURSES} demo={IS_DEMO_DATA} />}
       </main>
 

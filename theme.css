@@ -192,3 +192,10 @@ body [class*="bg-black/50"] { background: rgba(22, 35, 59, .42); }
 .cn-dot.on { background: var(--blue); border-color: var(--blue); color: #fff; }
 .cn-dot:disabled { cursor: default; opacity: .75; }
 .wca-chip.gap { background: #FDECEC; color: #B93A36; }
+
+/* ---- demo strip: which department's chair you are previewing as ---------- */
+.wca-chairrow { flex-basis: 100%; display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; }
+.wca-chairrow select {
+  height: 30px; padding: 0 28px 0 10px; border: 1.5px solid var(--steel-line); border-radius: 10px;
+  background-color: #fff; color: var(--navy); font: inherit; font-size: 12.5px; font-weight: 700;
+}
