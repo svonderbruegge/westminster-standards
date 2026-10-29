@@ -17,6 +17,7 @@
 <script src="standards-bank-history-add.js"></script>
 <script src="standards-bank-science-add.js"></script>
 <script src="standards-credits.js"></script>
+<script src="family-sheet.js"></script>
 <script src="easy-button.js"></script>
 <style>
   .print-only { display: none; }
@@ -48,6 +49,8 @@ const WORKER_URL = "https://standards-proxy.svonderbruegge.workers.dev";
 // Demo-mode stand-ins for the signed-in user (replaced by real login in Phase 3)
 const DEMO_USER = "John Smith";
 const DEMO_CHAIR_DEPARTMENT = "Mathematics";
+// While the app is showing sample standards, any family sheet it makes says so on the page.
+const IS_DEMO_DATA = true;
 
 /* =====================================================================
    DATA
@@ -2029,6 +2032,135 @@ function OutlineView({ standards, units, onAddUnit, onAssignUnit, onApplyDraft, 
 /* =====================================================================
    APP
    ===================================================================== */
+/* =====================================================================
+   FAMILY SHEETS  (principal and SuperAdmin)
+   Builds a one-page overview of a department for families on a tour. All the work is
+   in family-sheet.js; this is the screen around it.
+   ===================================================================== */
+function FamilySheetsView({ standards, portraits, west, courses, demo }) {
+  const FS = window.FamilySheet;
+  const depts = FS ? FS.eligibleDepartments(portraits) : [];
+  const ok = depts.filter(d => d.ok);
+  const blocked = depts.filter(d => !d.ok);
+  const [department, setDepartment] = useState(ok.some(d => d.name === "Mathematics") ? "Mathematics" : (ok[0] ? ok[0].name : ""));
+  const [family, setFamily] = useState("");
+  const [grade, setGrade] = useState("");
+  const [count, setCount] = useState("1");
+  const [built, setBuilt] = useState(null);
+  const [idx, setIdx] = useState(0);
+  const [error, setError] = useState("");
+  const SC = 0.62;                                   // preview scale
+
+  const create = () => {
+    try {
+      const b = FS.build({ department: department, portrait: portraits[department], west: west, courses: courses,
+        standards: standards, family: family, grade: grade, count: parseInt(count, 10), demo: demo });
+      setBuilt(b); setIdx(0); setError("");
+    } catch (e) { setError(e.message); setBuilt(null); }
+  };
+  const printAll = () => {
+    if (!built) return;
+    const w = window.open("", "_blank");
+    if (!w) { setError("Your browser blocked the print window. Allow pop-ups for this site, then try again."); return; }
+    w.document.open(); w.document.write(built.html); w.document.close();
+    setTimeout(() => { try { if (w.__fitSheets) w.__fitSheets(); w.focus(); w.print(); } catch (e) {} }, 700);
+  };
+  const srcDoc = useMemo(() => built ? built.one(idx) : "", [built, idx]);
+  const n = built ? built.pages.length : 0;
+
+  if (!FS) return <Note>The family-sheet file did not load. Make sure family-sheet.js is uploaded next to index.html.</Note>;
+
+  return (
+    <div className="space-y-6">
+      <SectionTitle title="Family sheets"
+        subtitle="A one-page snapshot of a department for families on a tour. Every sheet you create is a little different, and every statement on it comes from an approved record." />
+
+      {demo && (
+        <Note>The app is showing sample standards right now, so each sheet is marked “Prototype · sample standards” and should not be handed to families yet.</Note>
+      )}
+
+      <div className="grid gap-6 lg:grid-cols-[22rem_1fr]">
+        <div className="space-y-4 no-print">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="fs-dept">Department</label>
+            <select id="fs-dept" value={department} onChange={e => { setDepartment(e.target.value); setBuilt(null); }}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg">
+              {ok.map(d => <option key={d.name} value={d.name}>{d.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="fs-family">Family name <span className="text-gray-500 font-normal">(optional)</span></label>
+            <input id="fs-family" type="text" value={family} maxLength={40} onChange={e => setFamily(e.target.value)}
+              placeholder="e.g., Hernandez" className="w-full px-4 py-2 border border-gray-300 rounded-lg" />
+            <p className="text-xs text-gray-500 mt-1">Adds “Prepared for the Hernandez family” and today’s date.</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="fs-grade">Grade the student starts in <span className="text-gray-500 font-normal">(optional)</span></label>
+            <select id="fs-grade" value={grade} onChange={e => setGrade(e.target.value)} className="w-full px-4 py-2 border border-gray-300 rounded-lg">
+              <option value="">Not specified</option>
+              {[7, 8, 9, 10, 11, 12].map(g => <option key={g} value={g}>Grade {g}</option>)}
+            </select>
+            <p className="text-xs text-gray-500 mt-1">Highlights where that student begins on the pathway chart.</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="fs-count">How many different sheets</label>
+            <select id="fs-count" value={count} onChange={e => setCount(e.target.value)} className="w-full px-4 py-2 border border-gray-300 rounded-lg">
+              {[1, 5, 10, 25].map(c => <option key={c} value={c}>{c === 1 ? "1 sheet" : c + " sheets, each different"}</option>)}
+            </select>
+            <p className="text-xs text-gray-500 mt-1">Print a stack, sign the stack, and hand them out. Copies of a single signed sheet would all look the same.</p>
+          </div>
+
+          <button onClick={create} disabled={!department}
+            className="w-full px-5 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold disabled:bg-gray-300 disabled:cursor-not-allowed">
+            {built ? "Create new sheet" + (parseInt(count, 10) > 1 ? "s" : "") : "Create sheet" + (parseInt(count, 10) > 1 ? "s" : "")}
+          </button>
+          {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+
+          <details className="text-sm text-gray-600">
+            <summary className="cursor-pointer font-medium text-gray-700">Why aren’t the other departments here?</summary>
+            <ul className="mt-2 space-y-2">
+              {blocked.map(d => <li key={d.name}><span className="font-medium text-gray-800">{d.name}.</span> {d.reason}</li>)}
+            </ul>
+          </details>
+        </div>
+
+        <div>
+          {!built && (
+            <div className="border border-dashed border-gray-300 rounded-lg p-10 text-center text-gray-500 bg-white">
+              Your sheet will appear here. Choose a department and press Create sheet.
+            </div>
+          )}
+          {built && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-3 flex-wrap no-print">
+                <button onClick={printAll} className="px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold">
+                  {n > 1 ? "Print or save all " + n + " as PDF" : "Print or save as PDF"}
+                </button>
+                {n > 1 && (
+                  <span className="inline-flex items-center gap-2 text-sm text-gray-600">
+                    <button onClick={() => setIdx(Math.max(0, idx - 1))} disabled={idx === 0} aria-label="Previous sheet"
+                      className="px-3 py-1 border border-gray-300 rounded-lg disabled:opacity-40">‹</button>
+                    Sheet {idx + 1} of {n}
+                    <button onClick={() => setIdx(Math.min(n - 1, idx + 1))} disabled={idx === n - 1} aria-label="Next sheet"
+                      className="px-3 py-1 border border-gray-300 rounded-lg disabled:opacity-40">›</button>
+                  </span>
+                )}
+                <span className="text-xs text-gray-500">Sheet ID {built.plans[idx].id}. It is printed in the footer so you can tell which version a family received.</span>
+              </div>
+              <div className="border border-gray-300 rounded-lg overflow-auto bg-gray-100 p-3">
+                <div style={{ width: Math.round(8.5 * 96 * SC), height: Math.round(11 * 96 * SC), position: "relative" }}>
+                  <iframe title={"Preview of sheet " + (idx + 1)} srcDoc={srcDoc}
+                    style={{ width: "8.5in", height: "11in", border: 0, transform: "scale(" + SC + ")", transformOrigin: "top left", position: "absolute", top: 0, left: 0, background: "#fff" }} />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function NavButton({ active, onClick, icon, children }) {
   return (
     <button onClick={onClick} aria-current={active ? "page" : undefined}
@@ -2041,6 +2173,9 @@ function NavButton({ active, onClick, icon, children }) {
 function App() {
   const [view, setView] = useState("outline");
   const [userRole, setUserRole] = useState("teacher");
+  // Family Sheets belong to principals and SuperAdmins; anyone else is sent back to the outline.
+  const canSheets = userRole === "principal" || userRole === "superadmin";
+  const effectiveView = (view === "sheets" && !canSheets) ? "outline" : view;
   const [standards, setStandards] = useState(SAMPLE_STANDARDS);
   const [units, setUnits] = useState({
     [courseKey("Middle School", "Mathematics", "Algebra 1")]: ["Unit 1: Linear Equations", "Unit 2: Factoring and Quadratics"]
@@ -2139,23 +2274,25 @@ function App() {
       <nav className="wca-nav no-print" aria-label="Sections">
         <div className="wca-wrap">
           <div className="wca-navrow">
-            <NavButton active={view === "outline"} onClick={() => setView("outline")} icon="target">Course Outlines</NavButton>
-            <NavButton active={view === "create"} onClick={() => setView("create")} icon="plus">Create Standard</NavButton>
-            <NavButton active={view === "browse"} onClick={() => setView("browse")} icon="book">Browse Standards</NavButton>
+            <NavButton active={effectiveView === "outline"} onClick={() => setView("outline")} icon="target">Course Outlines</NavButton>
+            <NavButton active={effectiveView === "create"} onClick={() => setView("create")} icon="plus">Create Standard</NavButton>
+            <NavButton active={effectiveView === "browse"} onClick={() => setView("browse")} icon="book">Browse Standards</NavButton>
+            {canSheets && <NavButton active={effectiveView === "sheets"} onClick={() => setView("sheets")} icon="users">Family Sheets</NavButton>}
           </div>
         </div>
       </nav>
 
       <main className="wca-wrap wca-main">
-        {view === "browse" && (
+        {effectiveView === "browse" && (
           <BrowseView standards={standards} onApprove={approve} onReject={reject}
             userRole={userRole} currentUser={DEMO_USER} chairDepartment={DEMO_CHAIR_DEPARTMENT}
             school={school} setSchool={setSchool} department={department} setDepartment={setDepartment}
             course={course} setCourse={setCourse} searchTerm={searchTerm} setSearchTerm={setSearchTerm}
             statusFilter={statusFilter} setStatusFilter={setStatusFilter} />
         )}
-        {view === "create" && <CreateStandardView standards={standards} units={units} onSave={addStandard} onAddUnit={addUnit} currentUser={DEMO_USER} />}
-        {view === "outline" && <OutlineView standards={standards} units={units} onAddUnit={addUnit} onAssignUnit={assignUnit} onApplyDraft={applyEasyDraft} onRenameUnit={renameUnit} />}
+        {effectiveView === "create" && <CreateStandardView standards={standards} units={units} onSave={addStandard} onAddUnit={addUnit} currentUser={DEMO_USER} />}
+        {effectiveView === "outline" && <OutlineView standards={standards} units={units} onAddUnit={addUnit} onAssignUnit={assignUnit} onApplyDraft={applyEasyDraft} onRenameUnit={renameUnit} />}
+        {effectiveView === "sheets" && <FamilySheetsView standards={standards} portraits={DEPARTMENT_PORTRAITS} west={WESTMINSTER_PORTRAIT} courses={COURSES} demo={IS_DEMO_DATA} />}
       </main>
 
       <footer className="wca-wrap wca-credits no-print">
