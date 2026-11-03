@@ -32,6 +32,8 @@
   var MIN_ABOUT = 15;        // a unit description shorter than this is too thin to write from
   var MAX_ABOUT = 400;
   var MAX_NAME = 80;
+  var MIN_PASTE = 40;
+  var MAX_PASTE = 24000;     // about 8 pages; the Worker enforces the same limit
   var TOP_RANKED = 200;      // most relevant bank standards sent first when the bank is larger than MAX_SOURCES
   var MIDDLE_SCHOOL_GRADES = [7, 8];
   var HIGH_SCHOOL_GRADES = [9, 10, 11, 12];
@@ -152,6 +154,17 @@
     };
   }
 
+  // The paste box. There is deliberately no maxLength on the box itself, because that would silently cut off
+  // what a teacher pasted; instead they are told it is too long.
+  function validatePaste(text) {
+    var t = String(text || "").trim();
+    if (t.length === 0) return { ok: false, msg: "Paste your standards into the box first." };
+    if (t.length < MIN_PASTE) return { ok: false, msg: "That is too short to be a list of standards. Paste the standards themselves." };
+    if (t.length > MAX_PASTE) return { ok: false, msg: "That is longer than the tool can read at once (about 8 pages). Paste half of it, then the other half." };
+    return { ok: true, msg: "" };
+  }
+  function pageEstimate(n) { return Math.max(1, Math.round(n / 3000)); }
+
   // Checks the unit form. Returns the cleaned rows to send, and a message for each problem field.
   function validateUnitRows(rows) {
     var errors = [], clean = [];
@@ -173,7 +186,8 @@
   function portraitFor(portrait) {
     if (!portrait || !Array.isArray(portrait.standards)) return [];
     return portrait.standards
-      .filter(function (s) { return s && s.code && s.description && String(s.description).trim(); })
+      // unfinished prompts ("Express their Love of the Lord...") are not statements anyone can align to
+      .filter(function (s) { return s && s.code && s.description && String(s.description).trim() && !/\.\.\.|\u2026/.test(s.description); })
       .map(function (s) { return { code: s.code, description: s.description }; });
   }
 
@@ -184,6 +198,9 @@
   function toDraft(data) {
     return {
       attribution: data.attribution || "",
+      // What happened to a pasted document: lines left out, items discarded, and how many got "Students will".
+      report: { imported: data.mode === "import", skipped: data.skipped || [], dropped: data.dropped || 0,
+                adjusted: data.adjusted || 0, unadjusted: data.unadjusted || 0 },
       units: (data.units || []).map(function (u) {
         return {
           uid: nextUid(),
@@ -191,7 +208,8 @@
           standards: (u.standards || []).map(function (s) {
             return {
               uid: nextUid(), include: true, category: s.category, description: s.description,
-              sourceNote: s.sourceNote, alignsTo: s.alignsTo || []
+              sourceNote: s.sourceNote, alignsTo: s.alignsTo || [],
+              original: s.original || "", adjusted: !!s.adjusted, teacher: s.source === "Teacher-written"
             };
           })
         };
@@ -208,7 +226,7 @@
         standards: u.standards
           .filter(function (s) { return s.include && String(s.description || "").trim(); })
           .map(function (s) {
-            return { category: String(s.category || "").trim() || "General", description: String(s.description).trim(), sourceNote: s.sourceNote, alignsTo: s.alignsTo };
+            return { category: String(s.category || "").trim() || "General", description: String(s.description).trim(), sourceNote: s.sourceNote, alignsTo: s.alignsTo, teacherWritten: !!s.teacher };
           })
       };
     }).filter(function (u) { return u.standards.length > 0; });
@@ -287,6 +305,14 @@
             className: "w-full px-3 py-2 border border-gray-300 rounded text-sm",
             onChange: function (e) { props.onChange({ description: e.target.value }); }
           }),
+          s.adjusted && s.original && h("div", { className: "mt-1 text-xs text-gray-600" },
+            h("span", { className: "font-semibold" }, "Your original: "), "\u201C" + s.original + "\u201D",
+            s.description !== s.original && h("button", {
+              type: "button", className: "ml-2 text-blue-700 hover:underline font-medium",
+              onClick: function () {
+                props.onChange({ description: s.original, adjusted: false, sourceNote: String(s.sourceNote || "").replace(" Opening words added by Claude.", "") });
+              }
+            }, "Use my original wording")),
           h("div", { className: "mt-1 flex items-center gap-2" },
             h("label", { htmlFor: id + "-unit", className: "text-xs text-gray-500" }, "Move to"),
             h("select", {
@@ -333,6 +359,9 @@
     var _built = useState("auto"), builtMode = _built[0], setBuiltMode = _built[1];
     var _rows = useState([{ name: "", about: "" }]), rows = _rows[0], setRows = _rows[1];
     var _show = useState(false), showErrors = _show[0], setShowErrors = _show[1];
+    var _paste = useState(""), pasteText = _paste[0], setPasteText = _paste[1];
+    var _will = useState(false), addWill = _will[0], setAddWill = _will[1];        // opt in: add "Students will" to pasted standards
+    var _align = useState(false), suggestAlign = _align[0], setSuggestAlign = _align[1];   // opt in: suggest Portrait alignment
 
     var existing = props.existingCount || 0;
     var bankInfo = collectSources(department, course);
@@ -362,6 +391,13 @@
         used = isFineArts ? { rows: [], total: 0, sampled: false, ranked: 0 } : collectSources(department, course, hint);
         body = { mode: "build_units", department: department, course: course.name, gradeLabel: gradeLabelFor(course),
                  units: check.clean, sources: used.rows, portrait: portraitFor(props.portrait) };
+      } else if (mode === "paste") {
+        var pv = validatePaste(pasteText);
+        if (!pv.ok) { setShowErrors(true); setError(pv.msg); return; }
+        used = { rows: [], total: 0, sampled: false, ranked: 0 };
+        body = { mode: "import_standards", department: department, course: course.name, gradeLabel: gradeLabelFor(course),
+                 text: pasteText, addStudentsWill: addWill, suggestAlignment: suggestAlign,
+                 portrait: suggestAlign ? portraitFor(props.portrait) : [] };
       } else {
         used = bankInfo;
         body = { mode: "build_course", department: department, course: course.name, gradeLabel: gradeLabelFor(course),
@@ -375,7 +411,7 @@
         body: JSON.stringify(body)
       }).then(function (res) {
         return res.json().then(function (data) {
-          if (!res.ok) throw new Error(data.error || "Request failed");
+          if (!res.ok) { var err = new Error(data.error || "Request failed"); err.friendly = !!data.friendly; throw err; }
           return data;
         });
       }).then(function (data) {
@@ -384,7 +420,8 @@
         setInfo({ sampled: used.sampled, total: used.total, used: used.rows.length, ranked: used.ranked || 0 });
         setPhase("review");
       }).catch(function (e) {
-        setError("The draft didn't work: " + e.message + ". Try again in a moment.");
+        // a problem the teacher can fix (too long, nothing found) is shown as it is; anything else is a generic retry
+        setError(e.friendly ? e.message : "The draft didn't work: " + e.message + ". Try again in a moment.");
         setPhase(draft ? "review" : "idle");
       });
     };
@@ -396,15 +433,21 @@
       var n = units.reduce(function (sum, u) { return sum + u.standards.length; }, 0);
       if (n === 0) { setError("Check at least one standard to add."); return; }
       props.onApply(units, draft.attribution);
-      setDoneMsg("Added " + n + " draft standards in " + units.length + " units. They are marked AI-suggested and still need a chair's approval.");
+      setDoneMsg(builtMode === "paste"
+        ? "Added " + n + " standards in " + units.length + " units, in your own words. They are saved as drafts and still need a chair's approval."
+        : "Added " + n + " draft standards in " + units.length + " units. They are marked AI-suggested and still need a chair's approval.");
       if (builtMode === "units") { setRows([{ name: "", about: "" }]); setShowErrors(false); }
+      if (builtMode === "paste") { setPasteText(""); setShowErrors(false); }
       setDraft(null); setPhase("idle"); setError("");
     };
 
     var title = h("h3", { className: "text-lg font-bold text-gray-900" }, "Build a semester draft");
-    var reviewIntro = builtMode === "units"
+    var reviewIntro = builtMode === "paste"
+      ? "These are your own standards, sorted into units. Claude didn't write them. Check that each one landed in the right unit, move any that didn't, and only what you keep is added to the outline."
+      : builtMode === "units"
       ? "These are your units, with standards Claude drafted for each one. You review the draft, edit or uncheck anything you don't want, and only what you keep is added to the outline."
       : "Claude drafts units and standards for " + course.name + ". You review the draft, edit or uncheck anything you don't want, and only what you keep is added to the outline.";
+    var reviewSource = builtMode === "paste" ? "Your standards stay in your own words." : sourceLine;
 
     // ---- Review panel ----
     if (phase === "review" && draft) {
@@ -418,10 +461,23 @@
       return h("section", { className: "no-print border-2 border-purple-300 bg-purple-50 rounded-lg p-5 space-y-5" },
         h("div", null, title,
           h("p", { className: "text-sm text-gray-700 mt-1" }, reviewIntro),
-          h("p", { className: "text-xs text-gray-500 mt-1" }, sourceLine)),
-        sampledLine && h("p", { className: "text-xs text-gray-600" }, sampledLine),
+          h("p", { className: "text-xs text-gray-500 mt-1" }, reviewSource)),
+        builtMode !== "paste" && sampledLine && h("p", { className: "text-xs text-gray-600" }, sampledLine),
         h("div", { className: "bg-white border border-purple-200 rounded p-3 text-sm text-gray-700" },
-          "These are AI-written drafts. Read each one before you keep it. " + selected + " of " + total + " are checked."),
+          (builtMode === "paste" ? "These are your own words. Read through them, then keep what you want. " : "These are AI-written drafts. Read each one before you keep it. ") +
+          selected + " of " + total + " are checked."),
+        builtMode === "paste" && draft.report && draft.report.adjusted > 0 && h("div", { role: "status", className: "p-3 bg-blue-50 border border-blue-200 text-blue-900 rounded text-sm" },
+          "Claude added \u201CStudents will\u201D to " + draft.report.adjusted + " standard" + (draft.report.adjusted === 1 ? "" : "s") + ". Your original wording is shown under each one, and you can switch back."),
+        builtMode === "paste" && draft.report && draft.report.unadjusted > 0 && h("div", { role: "status", className: "p-3 bg-yellow-50 border border-yellow-300 text-yellow-900 rounded text-sm" },
+          "Claude kept " + draft.report.unadjusted + " standard" + (draft.report.unadjusted === 1 ? "" : "s") + " exactly as you wrote " + (draft.report.unadjusted === 1 ? "it" : "them") + ", because adding \u201CStudents will\u201D would have changed what " + (draft.report.unadjusted === 1 ? "it asks" : "they ask") + " of students."),
+        builtMode === "paste" && draft.report && draft.report.skipped.length > 0 && h("div", { role: "status", className: "p-3 bg-yellow-50 border border-yellow-300 text-yellow-900 rounded text-sm space-y-1" },
+          h("div", { className: "font-semibold" }, "Claude left these lines out because they didn't look like standards:"),
+          h("ul", { className: "list-disc pl-5" }, draft.report.skipped.slice(0, 8).map(function (k, i) {
+            return h("li", { key: i }, "\u201C" + k.text + "\u201D" + (k.why ? " (" + k.why + ")" : ""));
+          })),
+          draft.report.skipped.length > 8 && h("div", { className: "text-xs" }, "and " + (draft.report.skipped.length - 8) + " more")),
+        builtMode === "paste" && draft.report && draft.report.dropped > 0 && h("div", { role: "status", className: "p-3 bg-yellow-50 border border-yellow-300 text-yellow-900 rounded text-sm" },
+          draft.report.dropped + " item" + (draft.report.dropped === 1 ? "" : "s") + " Claude returned didn't match your document word for word, so " + (draft.report.dropped === 1 ? "it was" : "they were") + " left out. If a standard of yours is missing, add it with Create Standard."),
         empty.length > 0 && h("div", { role: "status", className: "p-3 bg-yellow-50 border border-yellow-300 text-yellow-900 rounded text-sm" },
           "Claude couldn't write standards for " + empty.join(", ") + ". You can move a standard into it, leave it empty, or start over with a fuller description."),
         error && h("div", { role: "alert", className: "p-3 bg-red-50 border border-red-300 text-red-800 rounded text-sm" }, error),
@@ -469,6 +525,38 @@
         onClick: build, disabled: loading,
         className: "px-5 py-3 bg-purple-700 text-white rounded-lg hover:bg-purple-800 font-semibold disabled:bg-gray-400 disabled:cursor-wait"
       }, loading ? "Building your draft..." : "Build a semester draft")
+    );
+
+    var pv2 = validatePaste(pasteText), plen = pasteText.trim().length;
+    var noPortrait = portraitFor(props.portrait).length === 0;
+    var tickbox = function (checked, set, disabled, title, help) {
+      return h("label", { className: "flex items-start gap-2 text-sm text-gray-800" },
+        h("input", { type: "checkbox", checked: checked, disabled: disabled, onChange: function (e) { set(e.target.checked); }, className: "mt-1 h-4 w-4" }),
+        h("span", null, h("span", { className: "font-semibold" }, title), h("span", { className: "block text-xs text-gray-600" }, help)));
+    };
+    var pasteControls = h("div", { className: "space-y-3" },
+      h("p", { className: "text-sm text-gray-700" },
+        "Copy your standards from your document and paste them below, units and all. Claude finds your units and standards and sorts them. It copies your words exactly. It doesn't write anything of its own."),
+      h("textarea", {
+        id: "eb-paste", "aria-label": "Your standards", rows: 10, disabled: loading, value: pasteText,
+        placeholder: "Paste your standards here, with your unit headings.",
+        "aria-invalid": showErrors && !pv2.ok,
+        className: "w-full px-3 py-2 border rounded-lg text-sm " + (showErrors && !pv2.ok ? "border-red-400" : "border-gray-300"),
+        onChange: function (e) { setPasteText(e.target.value); }
+      }),
+      h("div", { className: "flex justify-between gap-3 text-xs" },
+        h("span", { className: "text-gray-500" }, "Up to about 8 pages at a time. Longer than that? Paste half, then the other half."),
+        h("span", { className: plen > MAX_PASTE ? "text-red-700 font-semibold" : plen > MAX_PASTE * 0.9 ? "text-yellow-800" : "text-gray-500" },
+          plen.toLocaleString("en-US") + " of " + MAX_PASTE.toLocaleString("en-US") + " characters" + (plen > 0 ? " (about " + pageEstimate(plen) + (pageEstimate(plen) === 1 ? " page)" : " pages)") : ""))),
+      tickbox(addWill, setAddWill, loading, "Start my standards with \u201CStudents will\u201D where they don't already.",
+        "Claude adds the opening words and changes the verb to fit. It doesn't change what your standard asks of students. You'll see your original wording under any change and can switch back."),
+      tickbox(suggestAlign && !noPortrait, setSuggestAlign, loading || noPortrait, "Also suggest which Portrait statements each standard supports.",
+        noPortrait ? "No portrait statements are written for this department yet." : "Claude's suggestions are labeled as its own, and you can ignore them."),
+      h("div", { className: "flex gap-3 flex-wrap items-center" },
+        h("button", {
+          onClick: build, disabled: loading,
+          className: "px-5 py-3 bg-purple-700 text-white rounded-lg hover:bg-purple-800 font-semibold disabled:bg-gray-400 disabled:cursor-wait"
+        }, loading ? "Sorting your standards..." : "Sort my standards"))
     );
 
     var unitControls = h("div", { className: "space-y-3" },
@@ -520,13 +608,14 @@
         h("p", { className: "text-sm text-gray-700 mt-1" }, "Choose how much help you want. Either way, you review everything, and only what you keep is added to the outline.")),
       h("div", { className: "flex gap-3 flex-wrap", role: "group", "aria-label": "How much help do you want?" },
         tab("auto", "Plan it for me", "Claude proposes the units and writes the standards."),
-        tab("units", "I'll describe my units", "You list your units. Claude writes the standards.")),
-      h("p", { className: "text-xs text-gray-500" }, sourceLine),
+        tab("units", "I'll describe my units", "You list your units. Claude writes the standards."),
+        tab("paste", "I already have my standards", "Paste them in. Claude sorts them into units. Your wording stays yours.")),
+      h("p", { className: "text-xs text-gray-500" }, mode === "paste" ? "Your standards stay in your own words." : sourceLine),
       doneMsg && h("div", { role: "status", className: "p-3 bg-green-50 border border-green-300 text-green-800 rounded text-sm" }, doneMsg),
       error && h("div", { role: "alert", className: "p-3 bg-red-50 border border-red-300 text-red-800 rounded text-sm" }, error),
       existing > 0 && h("p", { className: "text-xs text-gray-600" }, "This course already has " + existing + " standards. A new draft is reviewed first and added alongside them."),
-      mode === "units" ? unitControls : autoControls,
-      loading && h("p", { className: "text-sm text-gray-600" }, "This usually takes 20 to 40 seconds.")
+      mode === "units" ? unitControls : mode === "paste" ? pasteControls : autoControls,
+      loading && h("p", { className: "text-sm text-gray-600" }, mode === "paste" ? "This usually takes under a minute. A long document can take two." : "This usually takes 20 to 40 seconds.")
     );
   }
 
@@ -539,7 +628,7 @@
   window.EasyButton = EasyButton;
   window.EasyButtonLogic = {
     gradesFor: gradesFor, gradeLabelFor: gradeLabelFor, parseGradeRange: parseGradeRange, gradesOverlap: gradesOverlap,
-    collectSources: collectSources, hintWords: hintWords, validateUnitRows: validateUnitRows, portraitFor: portraitFor, toDraft: toDraft, selectedUnits: selectedUnits,
-    countSelected: countSelected, moveStandard: moveStandard, updateStandard: updateStandard, renameUnit: renameUnit
+    collectSources: collectSources, hintWords: hintWords, validateUnitRows: validateUnitRows, validatePaste: validatePaste, pageEstimate: pageEstimate, portraitFor: portraitFor, toDraft: toDraft, selectedUnits: selectedUnits,
+    countSelected: countSelected, StandardRow: StandardRow, moveStandard: moveStandard, updateStandard: updateStandard, renameUnit: renameUnit
   };
 })();

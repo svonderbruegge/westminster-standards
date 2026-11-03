@@ -2589,7 +2589,7 @@ function App() {
           category: st.category, description: st.description,
           placement: { complexity: 0, autonomy: 0 }, status: "draft", submitted: false,
           createdBy: DEMO_USER, createdDate: today,
-          alignsTo: st.alignsTo || [], assessments: [], aiSuggested: true, sourceNote: st.sourceNote
+          alignsTo: st.alignsTo || [], assessments: [], aiSuggested: !st.teacherWritten, sourceNote: st.sourceNote
         });
       }));
       return prev.concat(created);
