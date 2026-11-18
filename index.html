@@ -2268,10 +2268,10 @@ function OutlineReport({ course, portrait, standards, unitList, onAddUnit, onAss
   );
 }
 
-function OutlineView({ standards, units, onAddUnit, onAssignUnit, onApplyDraft, onRenameUnit }) {
-  const [school, setSchool] = useState("");
-  const [department, setDepartment] = useState("");
-  const [courseName, setCourseName] = useState("");
+function OutlineView({ standards, units, onAddUnit, onAssignUnit, onApplyDraft, onRenameUnit, focus }) {
+  const [school, setSchool] = useState(focus ? focus.school : "");
+  const [department, setDepartment] = useState(focus ? focus.department : "");
+  const [courseName, setCourseName] = useState(focus ? focus.course : "");
   const [showWestminster, setShowWestminster] = useState(false);
   const [showDepartment, setShowDepartment] = useState(false);
 
@@ -2539,13 +2539,316 @@ function ConnectionsOverview({ choices, onPick, active, onPrint }) {
   );
 }
 
-function SetConnectionsView({ userRole, chairDepartment, currentUser, version, onChange }) {
+/* =====================================================================
+   TO-DO LIST FOR CHAIRS AND PRINCIPALS, AND PORTRAIT UPLOAD
+   A short checklist per department for the rollout. Chairs see their own department; principals and
+   SuperAdmins see every department, the ones with the most left to do first.
+   ===================================================================== */
+const PORTRAIT_PROMPTS = ["Love of the Lord", "Know God Created Them", "Understand the World", "Value Learning", "Find Joy", "Honor the Lord", "Cultivate their experience"];
+
+function portraitIsReal(p) { return !!p && (p.status === "complete" || p.status === "partial"); }
+
+// Everything one department still needs, as a checklist. Each item: { key, done, title, detail, actions: [{label, run}] }.
+function todoItemsFor(dept, standards, userRole, go) {
+  const p = DEPARTMENT_PORTRAITS[dept];
+  const isApprover = userRole === "principal" || userRole === "superadmin";
+  const items = [];
+
+  // 1. The portrait itself
+  const nStmts = p ? p.standards.length : 0;
+  if (portraitIsReal(p) && p.status === "complete") {
+    items.push({ key: "portrait", done: true, title: "The department portrait is written",
+      detail: nStmts + " statements." + (p.uploadedBy ? " Added by " + p.uploadedBy + " on " + p.uploadedDate + "." : ""),
+      actions: [{ label: "Edit portrait", run: () => go.portrait(dept), quiet: true }] });
+  } else if (portraitIsReal(p)) {
+    items.push({ key: "portrait", done: false, title: "Finish the department portrait",
+      detail: "Only part of it is written so far (" + nStmts + " statements).",
+      actions: [{ label: "Add or edit statements", run: () => go.portrait(dept) }] });
+  } else {
+    items.push({ key: "portrait", done: false, title: "Add the department portrait",
+      detail: p && p.status === "placeholder"
+        ? "The portrait here is only a placeholder. Paste or upload the real one."
+        : "There is no portrait yet, only the prompts. Paste or upload it and Claude will sort it into statements.",
+      actions: [{ label: "Add the portrait", run: () => go.portrait(dept) }] });
+  }
+
+  // 2. Connections to the Westminster Portrait
+  if (!connectionsOpen(dept)) {
+    items.push({ key: "connections", done: false, waiting: true, title: "Connect the portrait to Westminster's seven statements",
+      detail: "Waiting for the portrait. This step opens as soon as it is written.", actions: [] });
+  } else {
+    const sm = connectionSummary(dept);
+    const complete = sm.kind === "approved" && sm.covered === sm.total;
+    const pending = sm.proposal && sm.proposal.status === "pending";
+    items.push({ key: "connections", done: complete,
+      title: complete ? "The portrait is connected to Westminster's seven statements" : (isApprover && pending ? "Review the connections the chair submitted" : "Connect the portrait to Westminster's seven statements"),
+      detail: complete ? "Approved" + (sm.approvedBy ? " by " + sm.approvedBy : "") + "."
+        : pending ? (isApprover ? "They are waiting for your approval." : "Submitted. Waiting for a principal's approval.")
+        : sm.kind === "default" ? "Statements are lined up by number for now (1 to 1, 2 to 2…). Check them and approve, or change them."
+        : sm.covered + " of " + sm.total + " department statements are connected.",
+      actions: (complete || (pending && !isApprover)) ? [] : [{ label: isApprover && pending ? "Review" : "Set connections", run: () => go.connections(dept) }] });
+  }
+
+  // 3. Standards teachers have submitted
+  const waiting = standards.filter(s => s.department === dept && s.status === "draft" && s.submitted);
+  const byCourse = {};
+  waiting.forEach(s => { const k = s.school + "|" + s.course; (byCourse[k] = byCourse[k] || { school: s.school, course: s.course, n: 0 }).n++; });
+  const courseRows = Object.keys(byCourse).map(k => byCourse[k]);
+  items.push({ key: "approvals", done: waiting.length === 0,
+    title: waiting.length ? "Approve the standards teachers submitted (" + waiting.length + ")" : "No standards are waiting for your approval",
+    detail: waiting.length ? "Open each course, read the standards, and approve or send them back." : "Nothing to review right now.",
+    actions: courseRows.map(r => ({ label: r.course + " (" + r.n + ")", run: () => go.browse(r.school, dept, r.course) })) });
+
+  // 4. Courses with no standards at all
+  const empty = [];
+  SCHOOLS.forEach(sc => ((COURSE_DATA[sc] && COURSE_DATA[sc][dept]) || []).forEach(c => {
+    if (!standards.some(s => s.school === sc && s.department === dept && s.course === c)) empty.push({ school: sc, course: c });
+  }));
+  items.push({ key: "courses", done: empty.length === 0,
+    title: empty.length ? empty.length + " course" + (empty.length > 1 ? "s have" : " has") + " no standards yet" : "Every course has standards",
+    detail: empty.length ? "Teachers can use Create Standard, or open the course outline and use the Easy button to draft a semester." : "",
+    actions: empty.map(r => ({ label: r.course + (r.school === "Middle School" ? " (MS)" : ""), run: () => go.outline(r.school, dept, r.course) })) });
+  return items;
+}
+
+function todoOpenCount(depts, standards, userRole) {
+  const none = { portrait: () => {}, connections: () => {}, browse: () => {}, outline: () => {} };
+  let n = 0;
+  depts.forEach(d => todoItemsFor(d, standards, userRole, none).forEach(i => { if (!i.done && !i.waiting) n++; }));
+  return n;
+}
+
+function tidyLines(text) {
+  return text.replace(/\r\n?/g, "\n").split("\n")
+    .map(l => l.replace(/^\s*(?:[-•*·▪●○◦]|\(?\d{1,2}[.)])\s+/, "").trim())
+    .filter(l => l.length >= 15);
+}
+
+/* Adds or edits one department's portrait. Paste (or load a .txt file) -> Claude sorts it -> the chair edits -> save. */
+function PortraitUpload({ dept, currentUser, onSaved, onCancel }) {
+  const p = DEPARTMENT_PORTRAITS[dept];
+  const hasReal = portraitIsReal(p);
+  const [stage, setStage] = useState(hasReal ? "review" : "paste");
+  const [text, setText] = useState("");
+  const [tagline, setTagline] = useState(hasReal ? (p.tagline || "") : "");
+  const [stmts, setStmts] = useState(hasReal ? p.standards.map(s => s.description) : []);
+  const [whole, setWhole] = useState(hasReal ? p.status === "complete" : true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
+
+  const loadFile = (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    if (f.size > 200000) { setError("That file is too big to be a portrait. Paste the portrait text instead."); return; }
+    const r = new FileReader();
+    r.onload = () => { setText(String(r.result || "")); setError(""); };
+    r.onerror = () => setError("The file could not be read. Paste the text instead.");
+    r.readAsText(f);
+  };
+  const useLines = () => {
+    setError(""); setInfo("");
+    const lines = tidyLines(text);
+    let tag = "";
+    const rest = lines.filter(l => { if (!tag && /graduates will be people who/i.test(l) && l.length < 220) { tag = l; return false; } return true; });
+    if (rest.length === 0) { setError("I couldn't find any statements. Put each statement on its own line, then try again."); return; }
+    setTagline(tag || tagline); setStmts(rest.slice(0, 12)); setStage("review");
+    setInfo("These are your lines exactly as pasted. Check that each line is one statement.");
+  };
+  const sortWithClaude = async () => {
+    setError(""); setInfo("");
+    if (!WORKER_URL) { setError("The AI service isn't connected. Use “Use my lines as they are” instead."); return; }
+    setBusy(true);
+    try {
+      const res = await fetch(WORKER_URL, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "import_portrait", department: dept, text: text }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Request failed");
+      setTagline(data.tagline || tagline); setStmts(data.statements); setStage("review");
+      setInfo("Claude found " + data.statements.length + " statement" + (data.statements.length === 1 ? "" : "s") + " and copied each one exactly. Check them against your document." + (data.dropped ? " " + data.dropped + " line" + (data.dropped > 1 ? "s were" : " was") + " left out because they did not match your text." : ""));
+    } catch (e) {
+      setError(e.message + " You can use “Use my lines as they are” instead.");
+    } finally { setBusy(false); }
+  };
+  const setStmt = (i, v) => setStmts(prev => prev.map((x, j) => j === i ? v : x));
+  const save = () => {
+    const clean = stmts.map(x => x.replace(/\s+/g, " ").trim()).filter(Boolean);
+    if (clean.length === 0) { setError("Add at least one statement."); return; }
+    if (clean.some(x => x.length < 10)) { setError("One of the statements is very short. Finish it or remove it."); return; }
+    const prefix = p.standards[0].code.replace(/-POG-\d+$/, "");
+    const changed = hasReal && (p.standards.length !== clean.length || p.standards.some((s, i) => s.description !== clean[i]));
+    if (changed && CONNECTIONS[dept] && (CONNECTIONS[dept].approved || CONNECTIONS[dept].proposal) &&
+        !window.confirm("Changing the statements clears this department's saved connections to the Westminster Portrait, and they will need to be set again. Continue?")) return;
+    DEPARTMENT_PORTRAITS[dept] = Object.assign({}, p, {
+      status: whole ? "complete" : "partial",
+      tagline: tagline.trim() || p.tagline,
+      partialNote: whole ? undefined : "This portrait is still being written (" + clean.length + " statements so far).",
+      standards: clean.map((d, i) => ({ code: prefix + "-POG-" + (i + 1), description: d })),
+      uploadedBy: currentUser, uploadedDate: todayIso()
+    });
+    if (changed) delete CONNECTIONS[dept];
+    _deptOfCode = null;
+    onSaved(dept, clean.length);
+  };
+
+  return (
+    <div className="mt-3 p-4 bg-indigo-50 border-2 border-indigo-200 rounded-lg space-y-3">
+      <h4 className="font-bold text-gray-800">{hasReal ? "Edit the " : "Add the "}{dept} Department Portrait</h4>
+      {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+      {info && <p className="text-sm text-indigo-900">{info}</p>}
+      {stage === "paste" && (
+        <>
+          <p className="text-sm text-gray-700">
+            Paste the portrait from your document, or load a text file. It can include the opening line (“Graduates will be people who…”) and the numbered statements.
+            For a Word or Google document, copy the portrait and paste it here.
+          </p>
+          <textarea value={text} onChange={e => setText(e.target.value)} rows={8} aria-label="Portrait text"
+            placeholder={"Westminster " + dept + " Department Graduates will be people who...\n1. Express their “Love of the Lord”...\n2. ..."}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+          <div className="flex items-center gap-3 flex-wrap">
+            <label className="text-sm text-indigo-800 underline cursor-pointer">Load a .txt file
+              <input type="file" accept=".txt,.md,text/plain" onChange={loadFile} className="sr-only" />
+            </label>
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            <button type="button" onClick={sortWithClaude} disabled={busy || text.trim().length < 40}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium disabled:bg-gray-300">
+              {busy ? "Sorting…" : "Sort it for me with Claude"}
+            </button>
+            <button type="button" onClick={useLines} disabled={busy || text.trim().length < 15}
+              className="px-4 py-2 border border-indigo-300 text-indigo-800 rounded-lg hover:bg-white text-sm font-medium disabled:opacity-50">
+              Use my lines as they are
+            </button>
+            <button type="button" onClick={onCancel} className="px-4 py-2 text-gray-700 text-sm">Cancel</button>
+          </div>
+          <p className="text-xs text-gray-600">Claude only copies. It never rewrites your statements, and anything it cannot find in your text is thrown away.</p>
+        </>
+      )}
+      {stage === "review" && (
+        <>
+          <label className="block text-sm font-medium text-gray-700">Opening line
+            <input type="text" value={tagline} onChange={e => setTagline(e.target.value)}
+              placeholder={"Westminster " + dept + " Department Graduates will be people who..."}
+              className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+          </label>
+          <p className="text-sm text-gray-700">
+            Each box is one statement. Most departments write seven, matching Westminster’s seven (English has 8 and Fine Arts has 3). You have {stmts.length}.
+          </p>
+          <div className="space-y-2">
+            {stmts.map((t, i) => (
+              <div key={i} className="flex gap-2 items-start">
+                <span className="text-xs font-semibold text-indigo-900 w-28 shrink-0 pt-2">{i + 1}{PORTRAIT_PROMPTS[i] && stmts.length === 7 ? " · " + PORTRAIT_PROMPTS[i] : ""}</span>
+                <textarea value={t} onChange={e => setStmt(i, e.target.value)} rows={2} aria-label={"Statement " + (i + 1)}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                <button type="button" onClick={() => setStmts(prev => prev.filter((_, j) => j !== i))} aria-label={"Remove statement " + (i + 1)}
+                  className="px-2 py-1 text-sm text-red-700 hover:underline">Remove</button>
+              </div>
+            ))}
+          </div>
+          <div>
+            <button type="button" onClick={() => setStmts(prev => prev.concat([""]))} className="text-sm text-indigo-800 underline">+ Add a statement</button>
+            {!hasReal && <button type="button" onClick={() => { setStage("paste"); setInfo(""); }} className="text-sm text-indigo-800 underline ml-4">Start over with different text</button>}
+          </div>
+          <label className="flex items-center gap-2 text-sm text-gray-800">
+            <input type="checkbox" checked={whole} onChange={e => setWhole(e.target.checked)} />
+            This is the whole portrait. (Leave it unchecked if you are still writing it.)
+          </label>
+          <div className="flex gap-2 flex-wrap">
+            <button type="button" onClick={save} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium">Save the portrait</button>
+            <button type="button" onClick={onCancel} className="px-4 py-2 text-gray-700 text-sm">Cancel</button>
+          </div>
+          <p className="text-xs text-gray-600">During the demo this stays in this browser tab only. Saving it does not change any approved connections unless you changed a statement.</p>
+        </>
+      )}
+    </div>
+  );
+}
+
+function TodoCard({ dept, standards, userRole, currentUser, go, uploading, setUploading, onSaved, defaultOpen }) {
+  const items = todoItemsFor(dept, standards, userRole, Object.assign({}, go, { portrait: (d) => setUploading(d) }));
+  const real = items.filter(i => !i.waiting);
+  const doneCount = real.filter(i => i.done).length;
+  const allDone = doneCount === real.length;
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className="bg-white rounded-lg shadow border border-gray-200 overflow-hidden">
+      <button type="button" onClick={() => setOpen(!open)} aria-expanded={open}
+        className="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-gray-50">
+        <div>
+          <h3 className="text-lg font-bold text-gray-800">{dept}</h3>
+          <p className="text-sm text-gray-600">{allDone ? "All done ✓" : doneCount + " of " + real.length + " done"}</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="w-32 h-2 bg-gray-200 rounded-full overflow-hidden" aria-hidden="true">
+            <div className="h-2 bg-emerald-500" style={{ width: Math.round(100 * doneCount / Math.max(1, real.length)) + "%" }}></div>
+          </div>
+          <Icon name={open ? "chevronDown" : "chevronRight"} className="w-5 h-5 text-gray-400" />
+        </div>
+      </button>
+      {open && (
+        <ul className="px-5 pb-5 space-y-3">
+          {items.map(i => (
+            <li key={i.key} className="flex gap-3 items-start">
+              <span aria-hidden="true" className={"mt-0.5 inline-flex items-center justify-center w-6 h-6 rounded border-2 text-sm font-bold shrink-0 " +
+                (i.done ? "bg-emerald-500 border-emerald-600 text-white" : i.waiting ? "border-gray-300 text-gray-300" : "border-amber-500 text-transparent")}>{i.done ? "✓" : "·"}</span>
+              <div className="flex-1">
+                <p className={"font-semibold " + (i.done ? "text-gray-500" : i.waiting ? "text-gray-500" : "text-gray-900")}>
+                  {i.title}<span className="sr-only">{i.done ? " (done)" : i.waiting ? " (waiting)" : " (to do)"}</span>
+                </p>
+                {i.detail && <p className="text-sm text-gray-600">{i.detail}</p>}
+                {i.actions.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {i.actions.map((a, k) => (
+                      <button key={k} type="button" onClick={a.run}
+                        className={a.quiet ? "text-sm text-blue-700 underline" : "px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"}>{a.label}</button>
+                    ))}
+                  </div>
+                )}
+                {i.key === "portrait" && uploading === dept && (
+                  <PortraitUpload dept={dept} currentUser={currentUser} onSaved={onSaved} onCancel={() => setUploading("")} />
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function TodoView({ userRole, chairDepartment, standards, currentUser, go, version, onPortraitSaved }) {
+  const isApprover = userRole === "principal" || userRole === "superadmin";
+  const [uploading, setUploading] = useState("");
+  const [saved, setSaved] = useState("");
+  const all = Object.keys(DEPARTMENT_PORTRAITS);
+  const noop = { portrait: () => {}, connections: () => {}, browse: () => {}, outline: () => {} };
+  const left = (d) => todoItemsFor(d, standards, userRole, noop).filter(i => !i.done && !i.waiting).length;
+  const depts = isApprover ? all.slice().sort((a, b) => left(b) - left(a) || all.indexOf(a) - all.indexOf(b)) : all.filter(d => d === chairDepartment);
+  const onSaved = (d, n) => { setUploading(""); setSaved("Saved the " + d + " portrait (" + n + " statement" + (n === 1 ? "" : "s") + ")."); onPortraitSaved(); };
+  const totalLeft = depts.reduce((n, d) => n + left(d), 0);
+  return (
+    <div className="space-y-4">
+      <SectionTitle title={isApprover ? "To-do list: every department" : "Your to-do list: " + chairDepartment}
+        subtitle={isApprover
+          ? "Departments with the most left to do are first. Open one to see what it still needs. Principals can also add or edit any department's portrait."
+          : "Work from the top down. Each button takes you straight to the right screen. When everything is checked, you are set up for the year."} />
+      {saved && <div role="status" className="p-3 rounded-lg bg-green-50 border border-green-200 text-green-800 text-sm font-medium">✓ {saved}</div>}
+      <p className="text-sm text-gray-700">{totalLeft === 0 ? "Everything is done. Nothing is waiting for you." : totalLeft + " thing" + (totalLeft === 1 ? "" : "s") + " left to do."}</p>
+      {depts.map(d => (
+        <TodoCard key={d + ":" + version} dept={d} standards={standards} userRole={userRole} currentUser={currentUser} go={go}
+          uploading={uploading} setUploading={setUploading} onSaved={onSaved} defaultOpen={!isApprover || left(d) > 0 && depts.indexOf(d) < 3 || uploading === d} />
+      ))}
+    </div>
+  );
+}
+
+function SetConnectionsView({ userRole, chairDepartment, currentUser, version, onChange, initialDept }) {
   const isApprover = userRole === "principal" || userRole === "superadmin";
   const all = Object.keys(DEPARTMENT_PORTRAITS);
   const choices = isApprover ? all : all.filter(d => d === chairDepartment);
   const needsWork = (d) => { const sm = connectionSummary(d); return connectionsOpen(d) && (sm.covered < sm.total || (sm.proposal && sm.proposal.status === "pending")); };
   const startMap = (d) => { const e = CONNECTIONS[d]; return cloneMap(e && e.proposal ? e.proposal.map : effectiveConnections(d)); };
-  const [picked, setPicked] = useState(choices.find(needsWork) || choices[0]);
+  const [picked, setPicked] = useState(choices.includes(initialDept) ? initialDept : (choices.find(needsWork) || choices[0]));
   const dept = choices.includes(picked) ? picked : choices[0];
   const [work, setWork] = useState(() => startMap(dept));
   const [msg, setMsg] = useState(null);
@@ -2763,14 +3066,19 @@ function NavButton({ active, onClick, icon, children }) {
 
 function App() {
   const [view, setView] = useState("outline");
-  const [userRole, setUserRole] = useState("teacher");
+  const [userRole, setUserRoleRaw] = useState("teacher");
+  // Chairs and principals land on their to-do list when they sign in (here: when the demo role is picked).
+  const setUserRole = (r) => { setUserRoleRaw(r); if (r === "chair" || r === "principal" || r === "superadmin") setView("todo"); };
   // Demo only: which department the "Department Chair" role belongs to (real sign-in will supply this).
   const [chairDept, setChairDept] = useState(DEMO_CHAIR_DEPARTMENT);
   // Family Sheets belong to principals and SuperAdmins; anyone else is sent back to the outline.
   const canSheets = userRole === "principal" || userRole === "superadmin";
   const canConnect = userRole === "chair" || userRole === "principal" || userRole === "superadmin";
   const [connVersion, setConnVersion] = useState(0);        // bumps when a connection changes, so every screen redraws
-  const effectiveView = ((view === "sheets" && !canSheets) || (view === "connections" && !canConnect)) ? "outline" : view;
+  const canTodo = canConnect;
+  const effectiveView = ((view === "sheets" && !canSheets) || (view === "connections" && !canConnect) || (view === "todo" && !canTodo)) ? "outline" : view;
+  const [outlineFocus, setOutlineFocus] = useState(null);
+  const [connStart, setConnStart] = useState("");
   const [standards, setStandards] = useState(SAMPLE_STANDARDS);
   const standardsRef = React.useRef(standards);
   standardsRef.current = standards;
@@ -2806,6 +3114,13 @@ function App() {
     setStandards(prev => prev.map(s =>
       (courseKey(s.school, s.department, s.course) === key && s.unit === oldName)
         ? Object.assign({}, s, { unit: n }) : s));
+  };
+  // The to-do list sends people to the right screen.
+  const goTo = {
+    portrait: () => {},
+    connections: (d) => { setConnStart(d); setView("connections"); },
+    browse: (sc, d, c) => { setSchool(sc); setDepartment(d); setCourse(c); setSearchTerm(""); setStatusFilter("pendingApproval"); setView("browse"); },
+    outline: (sc, d, c) => { setOutlineFocus({ school: sc, department: d, course: c, n: Date.now() }); setView("outline"); }
   };
   const assignUnit = (id, unit) => setStandards(prev => prev.map(s => s.id === id ? Object.assign({}, s, { unit: unit }) : s));
   // Rates standards on the Rigor Scale (batches of up to 30 per course). A teacher's own placement is never overwritten.
@@ -2889,6 +3204,8 @@ function App() {
     setStandards(prev => prev.filter(s => s.id !== id));
   };
 
+  const todoDepts = userRole === "chair" ? [chairDept] : Object.keys(DEPARTMENT_PORTRAITS);
+  const todoCount = canTodo ? todoOpenCount(todoDepts, standards, userRole) : 0;
   const roles = [
     ["teacher", "Teacher"],
     ["chair", "Department Chair (" + chairDept + ")"],
@@ -2930,6 +3247,7 @@ function App() {
       <nav className="wca-nav no-print" aria-label="Sections">
         <div className="wca-wrap">
           <div className="wca-navrow">
+            {canTodo && <NavButton active={effectiveView === "todo"} onClick={() => setView("todo")} icon="award">To-Do{todoCount > 0 ? " (" + todoCount + ")" : ""}</NavButton>}
             <NavButton active={effectiveView === "outline"} onClick={() => setView("outline")} icon="target">Course Outlines</NavButton>
             <NavButton active={effectiveView === "create"} onClick={() => setView("create")} icon="plus">Create Standard</NavButton>
             <NavButton active={effectiveView === "browse"} onClick={() => setView("browse")} icon="book">Browse Standards</NavButton>
@@ -2961,9 +3279,11 @@ function App() {
             statusFilter={statusFilter} setStatusFilter={setStatusFilter} />
         )}
         {effectiveView === "create" && <CreateStandardView standards={standards} units={units} onSave={addStandard} onAddUnit={addUnit} currentUser={DEMO_USER} />}
-        {effectiveView === "outline" && <OutlineView standards={standards} units={units} onAddUnit={addUnit} onAssignUnit={assignUnit} onApplyDraft={applyEasyDraft} onRenameUnit={renameUnit} />}
+        {effectiveView === "todo" && <TodoView userRole={userRole} chairDepartment={chairDept} standards={standards} currentUser={DEMO_USER}
+          go={goTo} version={connVersion} onPortraitSaved={() => setConnVersion(v => v + 1)} />}
+        {effectiveView === "outline" && <OutlineView key={outlineFocus ? outlineFocus.n : "o"} focus={outlineFocus} standards={standards} units={units} onAddUnit={addUnit} onAssignUnit={assignUnit} onApplyDraft={applyEasyDraft} onRenameUnit={renameUnit} />}
         </RigorContext.Provider>
-        {effectiveView === "connections" && <SetConnectionsView key={userRole + ":" + chairDept} userRole={userRole} chairDepartment={chairDept} currentUser={DEMO_USER} version={connVersion} onChange={() => setConnVersion(v => v + 1)} />}
+        {effectiveView === "connections" && <SetConnectionsView key={userRole + ":" + chairDept + ":" + connStart} initialDept={connStart} userRole={userRole} chairDepartment={chairDept} currentUser={DEMO_USER} version={connVersion} onChange={() => setConnVersion(v => v + 1)} />}
         {effectiveView === "sheets" && <FamilySheetsView standards={standards} portraits={DEPARTMENT_PORTRAITS} west={WESTMINSTER_PORTRAIT} courses={COURSES} demo={IS_DEMO_DATA} />}
       </main>
 
