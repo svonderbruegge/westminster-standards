@@ -46,6 +46,15 @@ const { useState, useMemo } = React;
    After you deploy the Cloudflare Worker, paste its URL here.
    Example: "https://standards-proxy.YOUR-SUBDOMAIN.workers.dev"
    ===================================================================== */
+/* =====================================================================
+   PILOT SETTINGS
+   Which departments are in the pilot, and where feedback goes. To collect feedback in a shared place,
+   make a Google Form and paste its address into PILOT_FEEDBACK_URL (inside the quotes).
+   ===================================================================== */
+const PILOT_DEPARTMENTS = ["Mathematics", "Science", "Pathways"];
+const PILOT_FEEDBACK_URL = "";
+const isPilotDept = (d) => PILOT_DEPARTMENTS.includes(d);
+
 const WORKER_URL = "https://standards-proxy.svonderbruegge.workers.dev";
 
 // Demo-mode stand-ins for the signed-in user (replaced by real login in Phase 3)
@@ -2540,6 +2549,218 @@ function ConnectionsOverview({ choices, onPick, active, onPrint }) {
 }
 
 /* =====================================================================
+   PILOT: banner, feedback, and the Pilot Guide (what a pilot is, who does what, how it is going)
+   ===================================================================== */
+function PilotBar({ onGuide, onFeedback }) {
+  return (
+    <div className="no-print mb-3 flex items-center gap-3 flex-wrap rounded-lg border-2 border-amber-400 bg-amber-50 px-4 py-2 text-sm text-amber-950">
+      <span className="font-bold tracking-wide bg-amber-400 text-amber-950 rounded px-2 py-0.5">PILOT</span>
+      <span><span className="font-semibold">{PILOT_DEPARTMENTS.join(", ")}</span> are trying this out. Nothing you enter is saved between visits yet, so keep notes of anything you want to keep.</span>
+      <span className="ml-auto flex gap-2">
+        <button type="button" onClick={onGuide} className="px-3 py-1 rounded-lg border border-amber-500 bg-white hover:bg-amber-100 font-medium">Pilot guide</button>
+        <button type="button" onClick={onFeedback} className="px-3 py-1 rounded-lg bg-amber-600 text-white hover:bg-amber-700 font-medium">Give feedback</button>
+      </span>
+    </div>
+  );
+}
+
+const FEEDBACK_AREAS = ["Course Outlines", "Create Standard", "Browse Standards", "The standards bank", "Rigor ratings", "Easy button (semester draft)", "Portrait or connections", "To-Do list", "Something else"];
+function FeedbackModal({ view, role, dept, onClose }) {
+  const [area, setArea] = useState(view);
+  const [mood, setMood] = useState("");
+  const [text, setText] = useState("");
+  const [copied, setCopied] = useState("");
+  const summary = () => "WCA Standards Platform pilot feedback\n" +
+    "Part: " + area + "\nRole: " + role + (dept ? " (" + dept + ")" : "") + "\nHow it went: " + (mood || "not said") + "\n\n" + text.trim() + "\n";
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(summary()); setCopied("Copied. Paste it into your feedback form or an email."); }
+    catch (e) { setCopied("Your browser would not copy it. Select the text above and copy it by hand."); }
+  };
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-y-auto no-print" role="dialog" aria-modal="true" aria-label="Give feedback">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-lg mt-12 p-6 space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <h3 className="text-lg font-bold text-gray-800">Tell us how it went</h3>
+          <button type="button" onClick={onClose} aria-label="Close" className="text-2xl leading-none text-gray-500 hover:text-gray-800">×</button>
+        </div>
+        <label className="block text-sm font-medium text-gray-700">What part were you using?
+          <select value={area} onChange={e => setArea(e.target.value)} className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg">
+            {FEEDBACK_AREAS.map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
+        </label>
+        <div>
+          <p className="text-sm font-medium text-gray-700 mb-1">How did it go?</p>
+          <div className="flex gap-2 flex-wrap">
+            {["It worked well", "It was confusing", "It didn't work"].map(m => (
+              <button key={m} type="button" onClick={() => setMood(m)} aria-pressed={mood === m}
+                className={"px-3 py-1.5 rounded-lg border text-sm " + (mood === m ? "bg-blue-600 text-white border-blue-600" : "bg-white border-gray-300 hover:bg-gray-50")}>{m}</button>
+            ))}
+          </div>
+        </div>
+        <label className="block text-sm font-medium text-gray-700">What happened? What did you expect?
+          <textarea value={text} onChange={e => setText(e.target.value)} rows={5}
+            placeholder="For example: I picked a standard from the bank and the rigor rating looked too high because..."
+            className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+        </label>
+        {copied && <p role="status" className="text-sm text-green-800">{copied}</p>}
+        <div className="flex gap-2 flex-wrap">
+          <button type="button" onClick={copy} disabled={!text.trim()} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium disabled:bg-gray-300">Copy my feedback</button>
+          {PILOT_FEEDBACK_URL && <a href={PILOT_FEEDBACK_URL} target="_blank" rel="noopener noreferrer" className="px-4 py-2 border border-blue-300 text-blue-800 rounded-lg hover:bg-blue-50 text-sm font-medium">Open the feedback form</a>}
+          <button type="button" onClick={onClose} className="px-4 py-2 text-gray-700 text-sm">Close</button>
+        </div>
+        <p className="text-xs text-gray-600">{PILOT_FEEDBACK_URL ? "Copy your note, then open the form and paste it in." : "This page does not send feedback anywhere yet. Copy it and send it to the pilot lead."}</p>
+      </div>
+    </div>
+  );
+}
+
+const PILOT_TEACHER_TASKS = [
+  ["Find your course", "In Course Outlines, choose your school, department and course."],
+  ["Get a first draft", "Click the Easy button and describe your units, or pull a state or national standard from the bank in Create Standard."],
+  ["Check the rigor rating", "Open a standard. Does the Rigor Levels rating match what you ask of students? If not, click the box you think is right."],
+  ["Put standards in units", "Use the Unit menu on each standard in your outline."],
+  ["Look at your outline", "Scroll down your course outline. Do the standards line up with the department portrait?"],
+  ["Submit a standard", "Write one standard of your own in Create Standard and submit it for your chair's approval."],
+  ["Tell us how it went", "Click Give feedback at the top. One honest note about what confused you is worth more than ten compliments."]
+];
+const PILOT_CHAIR_TASKS = [
+  ["Open your To-Do list", "Work from the top. If your department has no portrait yet, add it."],
+  ["Connect your portrait", "Set Connections: link each department statement to Westminster's seven."],
+  ["Approve what teachers submit", "Read the standards waiting for you in Browse Standards, then approve or send back."],
+  ["Walk through one course with a teacher", "Sit with one teacher while they build their outline. Notice where they stop and ask a question."],
+  ["Tell us how it went", "Use Give feedback. Say what you would change before the whole school uses it."]
+];
+
+function PilotChecklist({ storeKey, tasks }) {
+  const [done, setDone] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(storeKey) || "{}"); } catch (e) { return {}; }
+  });
+  const toggle = (i) => setDone(prev => {
+    const next = Object.assign({}, prev, { [i]: !prev[i] });
+    try { localStorage.setItem(storeKey, JSON.stringify(next)); } catch (e) {}
+    return next;
+  });
+  const n = tasks.filter((t, i) => done[i]).length;
+  return (
+    <div>
+      <p className="text-sm text-gray-600 mb-2">{n} of {tasks.length} done. Your checkmarks stay on this computer.</p>
+      <ul className="space-y-2">
+        {tasks.map((t, i) => (
+          <li key={i}>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" checked={!!done[i]} onChange={() => toggle(i)} className="mt-1 w-4 h-4" />
+              <span><span className={"font-semibold " + (done[i] ? "text-gray-500 line-through" : "text-gray-900")}>{t[0]}.</span> <span className="text-sm text-gray-700">{t[1]}</span></span>
+            </label>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// How far along is each pilot department? (Counts come from what is loaded in this browser tab.)
+function pilotProgress(dept, standards) {
+  const mine = standards.filter(s => s.department === dept);
+  const names = [];
+  SCHOOLS.forEach(sc => ((COURSE_DATA[sc] && COURSE_DATA[sc][dept]) || []).forEach(c => names.push(sc + "|" + c)));
+  const withStd = names.filter(k => mine.some(s => s.school + "|" + s.course === k)).length;
+  const p = DEPARTMENT_PORTRAITS[dept];
+  const sm = connectionSummary(dept);
+  return {
+    portrait: !p ? "none" : p.status === "complete" ? "written" : p.status === "partial" ? "partly written" : "not written",
+    connections: !connectionsOpen(dept) ? "waiting on portrait" : (sm.kind === "approved" && sm.covered === sm.total ? "approved" : "not approved yet"),
+    courses: withStd + " of " + names.length,
+    total: mine.length,
+    approved: mine.filter(s => s.status === "approved").length,
+    waiting: mine.filter(s => s.status === "draft" && s.submitted).length,
+    rated: mine.filter(s => isRated(s.placement)).length,
+    zone: mine.filter(s => inRigorZone(s.placement)).length
+  };
+}
+
+function PilotView({ userRole, chairDepartment, standards, onFeedback, go }) {
+  const isApprover = userRole === "principal" || userRole === "superadmin";
+  const rows = PILOT_DEPARTMENTS.map(d => [d, pilotProgress(d, standards)]);
+  return (
+    <div className="space-y-6 max-w-4xl">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <SectionTitle title="Pilot guide" subtitle="What this pilot is, who does what, and how we will know whether it worked." />
+        <button type="button" onClick={() => window.print()} className="no-print px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Print this page</button>
+      </div>
+
+      <section className="bg-white rounded-lg shadow p-5 space-y-2">
+        <h4 className="font-bold text-gray-800">What a pilot is</h4>
+        <p className="text-sm text-gray-700">
+          A pilot is a small, real trial. A few departments use the tool for their actual work for a set time, and they tell us what is confusing, missing, or wrong. We fix those things <span className="font-semibold">before</span> the whole school is asked to use it. It is not a demonstration. The people who will use the tool every day, teachers and chairs, have to be the ones trying it, or we only learn what we already guessed.
+        </p>
+        <p className="text-sm text-gray-700"><span className="font-semibold">In the pilot:</span> {PILOT_DEPARTMENTS.join(", ")}, their chairs <span className="font-semibold">and</span> their teachers. Everyone else can look around, but we are not asking them to do anything yet.</p>
+      </section>
+
+      <section className="bg-white rounded-lg shadow p-5 space-y-3">
+        <h4 className="font-bold text-gray-800">Who does what</h4>
+        <div className="grid gap-5 md:grid-cols-2">
+          <div>
+            <h5 className="font-semibold text-gray-800 mb-2">Teachers</h5>
+            <PilotChecklist storeKey="wca-pilot-teacher" tasks={PILOT_TEACHER_TASKS} />
+          </div>
+          <div>
+            <h5 className="font-semibold text-gray-800 mb-2">Department chairs</h5>
+            <PilotChecklist storeKey="wca-pilot-chair" tasks={PILOT_CHAIR_TASKS} />
+          </div>
+        </div>
+        <p className="text-sm text-gray-700"><span className="font-semibold">Principals and the academic dean:</span> check the progress table below each week, read the feedback, and decide at the end whether the tool is ready for more departments.</p>
+      </section>
+
+      <section className="bg-white rounded-lg shadow p-5 space-y-3">
+        <h4 className="font-bold text-gray-800">How the pilot is going</h4>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-left">
+            <thead><tr className="border-b text-gray-600">
+              <th className="py-2 pr-3">Department</th><th className="pr-3">Portrait</th><th className="pr-3">Connections</th><th className="pr-3">Courses with standards</th>
+              <th className="pr-3">Standards</th><th className="pr-3">Approved</th><th className="pr-3">Waiting for chair</th><th>In the Rigor zone</th>
+            </tr></thead>
+            <tbody>
+              {rows.map(([d, r]) => (
+                <tr key={d} className="border-b last:border-0">
+                  <td className="py-2 pr-3 font-semibold">{d}</td><td className="pr-3">{r.portrait}</td><td className="pr-3">{r.connections}</td><td className="pr-3">{r.courses}</td>
+                  <td className="pr-3">{r.total}</td><td className="pr-3">{r.approved}</td><td className="pr-3">{r.waiting}</td><td>{r.rated ? r.zone + " of " + r.rated : "none rated"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-xs text-gray-600">These numbers only count what is open in this browser tab. They will count everyone's work once standards are saved in a shared place.</p>
+      </section>
+
+      <section className="bg-white rounded-lg shadow p-5 space-y-2">
+        <h4 className="font-bold text-gray-800">Questions the pilot should answer</h4>
+        <ul className="list-disc ml-5 text-sm text-gray-700 space-y-1">
+          <li>Can a teacher build a usable course outline without help? How long does it take?</li>
+          <li>Do teachers trust the bank standards and the rigor ratings, or do they override them? Where?</li>
+          <li>Can a chair see what needs their attention without being told?</li>
+          <li>Does the department portrait connect to the standards in a way teachers understand?</li>
+          <li>What did people try to do that the tool would not let them do?</li>
+        </ul>
+      </section>
+
+      <section className="bg-amber-50 border border-amber-300 rounded-lg p-5 space-y-2">
+        <h4 className="font-bold text-amber-950">What the tool cannot do yet</h4>
+        <ul className="list-disc ml-5 text-sm text-amber-950 space-y-1">
+          <li><span className="font-semibold">Nothing is saved between visits.</span> Closing or refreshing the page clears what you entered. Copy anything you want to keep.</li>
+          <li>Everyone is shown as the same demo user. Each person's own work, and a chair seeing a teacher's submissions, needs sign-in and a shared database.</li>
+          <li>No email goes out when a standard is submitted or approved.</li>
+        </ul>
+        <p className="text-sm text-amber-950">Until saving and sign-in exist, this pilot can test whether the tool makes sense and feels right. It cannot yet test it as a working part of the school year.</p>
+      </section>
+
+      <div className="no-print">
+        <button type="button" onClick={onFeedback} className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 font-medium">Give feedback</button>
+      </div>
+    </div>
+  );
+}
+
+/* =====================================================================
    TO-DO LIST FOR CHAIRS AND PRINCIPALS, AND PORTRAIT UPLOAD
    A short checklist per department for the rollout. Chairs see their own department; principals and
    SuperAdmins see every department, the ones with the most left to do first.
@@ -2775,7 +2996,9 @@ function TodoCard({ dept, standards, userRole, currentUser, go, uploading, setUp
       <button type="button" onClick={() => setOpen(!open)} aria-expanded={open}
         className="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-gray-50">
         <div>
-          <h3 className="text-lg font-bold text-gray-800">{dept}</h3>
+          <h3 className="text-lg font-bold text-gray-800">{dept}{isPilotDept(dept)
+            ? <span className="ml-2 align-middle text-xs font-bold bg-amber-400 text-amber-950 rounded px-2 py-0.5">IN THE PILOT</span>
+            : <span className="ml-2 align-middle text-xs font-medium text-gray-500 border border-gray-300 rounded px-2 py-0.5">not in the pilot yet</span>}</h3>
           <p className="text-sm text-gray-600">{allDone ? "All done ✓" : doneCount + " of " + real.length + " done"}</p>
         </div>
         <div className="flex items-center gap-3">
@@ -2823,7 +3046,9 @@ function TodoView({ userRole, chairDepartment, standards, currentUser, go, versi
   const all = Object.keys(DEPARTMENT_PORTRAITS);
   const noop = { portrait: () => {}, connections: () => {}, browse: () => {}, outline: () => {} };
   const left = (d) => todoItemsFor(d, standards, userRole, noop).filter(i => !i.done && !i.waiting).length;
-  const depts = isApprover ? all.slice().sort((a, b) => left(b) - left(a) || all.indexOf(a) - all.indexOf(b)) : all.filter(d => d === chairDepartment);
+  const depts = isApprover
+    ? all.slice().sort((a, b) => (isPilotDept(b) - isPilotDept(a)) || left(b) - left(a) || all.indexOf(a) - all.indexOf(b))
+    : all.filter(d => d === chairDepartment);
   const onSaved = (d, n) => { setUploading(""); setSaved("Saved the " + d + " portrait (" + n + " statement" + (n === 1 ? "" : "s") + ")."); onPortraitSaved(); };
   const totalLeft = depts.reduce((n, d) => n + left(d), 0);
   return (
@@ -2836,7 +3061,7 @@ function TodoView({ userRole, chairDepartment, standards, currentUser, go, versi
       <p className="text-sm text-gray-700">{totalLeft === 0 ? "Everything is done. Nothing is waiting for you." : totalLeft + " thing" + (totalLeft === 1 ? "" : "s") + " left to do."}</p>
       {depts.map(d => (
         <TodoCard key={d + ":" + version} dept={d} standards={standards} userRole={userRole} currentUser={currentUser} go={go}
-          uploading={uploading} setUploading={setUploading} onSaved={onSaved} defaultOpen={!isApprover || left(d) > 0 && depts.indexOf(d) < 3 || uploading === d} />
+          uploading={uploading} setUploading={setUploading} onSaved={onSaved} defaultOpen={!isApprover ? true : (isPilotDept(d) || uploading === d)} />
       ))}
     </div>
   );
@@ -3078,6 +3303,7 @@ function App() {
   const canTodo = canConnect;
   const effectiveView = ((view === "sheets" && !canSheets) || (view === "connections" && !canConnect) || (view === "todo" && !canTodo)) ? "outline" : view;
   const [outlineFocus, setOutlineFocus] = useState(null);
+  const [showFeedback, setShowFeedback] = useState(false);
   const [connStart, setConnStart] = useState("");
   const [standards, setStandards] = useState(SAMPLE_STANDARDS);
   const standardsRef = React.useRef(standards);
@@ -3253,11 +3479,15 @@ function App() {
             <NavButton active={effectiveView === "browse"} onClick={() => setView("browse")} icon="book">Browse Standards</NavButton>
             {canConnect && <NavButton active={effectiveView === "connections"} onClick={() => setView("connections")} icon="edit">Set Connections</NavButton>}
             {canSheets && <NavButton active={effectiveView === "sheets"} onClick={() => setView("sheets")} icon="users">Family Sheets</NavButton>}
+            <NavButton active={effectiveView === "pilot"} onClick={() => setView("pilot")} icon="sparkles">Pilot Guide</NavButton>
           </div>
         </div>
       </nav>
 
       <main className="wca-wrap wca-main">
+        <PilotBar onGuide={() => setView("pilot")} onFeedback={() => setShowFeedback(true)} />
+        {showFeedback && <FeedbackModal view={({ todo: "To-Do list", outline: "Course Outlines", create: "Create Standard", browse: "Browse Standards", connections: "Portrait or connections", sheets: "Something else", pilot: "Something else" })[effectiveView] || "Something else"}
+          role={userRole} dept={userRole === "chair" ? chairDept : ""} onClose={() => setShowFeedback(false)} />}
         {(effectiveView === "browse" || effectiveView === "outline") && (rateError || unratedIds.length > 0 || Object.keys(rating).length > 0) && (
           <div role="status" className="no-print mb-4 p-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-sm flex items-center justify-between gap-3 flex-wrap">
             <span>
@@ -3279,6 +3509,7 @@ function App() {
             statusFilter={statusFilter} setStatusFilter={setStatusFilter} />
         )}
         {effectiveView === "create" && <CreateStandardView standards={standards} units={units} onSave={addStandard} onAddUnit={addUnit} currentUser={DEMO_USER} />}
+        {effectiveView === "pilot" && <PilotView userRole={userRole} chairDepartment={chairDept} standards={standards} onFeedback={() => setShowFeedback(true)} go={goTo} />}
         {effectiveView === "todo" && <TodoView userRole={userRole} chairDepartment={chairDept} standards={standards} currentUser={DEMO_USER}
           go={goTo} version={connVersion} onPortraitSaved={() => setConnVersion(v => v + 1)} />}
         {effectiveView === "outline" && <OutlineView key={outlineFocus ? outlineFocus.n : "o"} focus={outlineFocus} standards={standards} units={units} onAddUnit={addUnit} onAssignUnit={assignUnit} onApplyDraft={applyEasyDraft} onRenameUnit={renameUnit} />}
