@@ -2577,7 +2577,7 @@ function PilotBar({ onGuide, onFeedback }) {
   );
 }
 
-const FEEDBACK_AREAS = ["Course Outlines", "Create Standard", "Browse Standards", "The standards bank", "Rigor ratings", "Easy button (semester draft)", "Portrait or connections", "To-Do list", "Something else"];
+const FEEDBACK_AREAS = ["Build Course Outlines", "Create Standard", "Browse Standards", "The standards bank", "Rigor ratings", "Easy button (semester draft)", "Portrait or connections", "To-Do list", "Something else"];
 function FeedbackModal({ view, role, dept, onClose }) {
   const [area, setArea] = useState(view);
   const [mood, setMood] = useState("");
@@ -2628,7 +2628,7 @@ function FeedbackModal({ view, role, dept, onClose }) {
 }
 
 const PILOT_TEACHER_TASKS = [
-  ["Find your course", "In Course Outlines, choose your school, department and course."],
+  ["Find your course", "In Build Course Outlines, choose your school, department and course."],
   ["Get a first draft", "Click the Easy button and describe your units, or pull a state or national standard from the bank in Create Standard."],
   ["Check the rigor rating", "Open a standard. Does the Rigor Levels rating match what you ask of students? If not, click the box you think is right."],
   ["Put standards in units", "Use the Unit menu on each standard in your outline."],
@@ -3489,7 +3489,7 @@ function App() {
         <div className="wca-wrap">
           <div className="wca-navrow">
             {canTodo && <NavButton active={effectiveView === "todo"} onClick={() => setView("todo")} icon="award">To-Do{todoCount > 0 ? " (" + todoCount + ")" : ""}</NavButton>}
-            <NavButton active={effectiveView === "outline"} onClick={() => setView("outline")} icon="target">Course Outlines</NavButton>
+            <NavButton active={effectiveView === "outline"} onClick={() => setView("outline")} icon="target">Build Course Outlines</NavButton>
             <NavButton active={effectiveView === "create"} onClick={() => setView("create")} icon="plus">Create Standard</NavButton>
             <NavButton active={effectiveView === "browse"} onClick={() => setView("browse")} icon="book">Browse Standards</NavButton>
             {canConnect && <NavButton active={effectiveView === "connections"} onClick={() => setView("connections")} icon="edit">Set Connections</NavButton>}
@@ -3501,7 +3501,7 @@ function App() {
 
       <main className="wca-wrap wca-main">
         <PilotBar onGuide={() => setView("pilot")} onFeedback={() => setShowFeedback(true)} />
-        {showFeedback && <FeedbackModal view={({ todo: "To-Do list", outline: "Course Outlines", create: "Create Standard", browse: "Browse Standards", connections: "Portrait or connections", sheets: "Something else", pilot: "Something else" })[effectiveView] || "Something else"}
+        {showFeedback && <FeedbackModal view={({ todo: "To-Do list", outline: "Build Course Outlines", create: "Create Standard", browse: "Browse Standards", connections: "Portrait or connections", sheets: "Something else", pilot: "Something else" })[effectiveView] || "Something else"}
           role={userRole} dept={userRole === "chair" ? chairDept : ""} onClose={() => setShowFeedback(false)} />}
         {(effectiveView === "browse" || effectiveView === "outline") && (rateError || unratedIds.length > 0 || Object.keys(rating).length > 0) && (
           <div role="status" className="no-print mb-4 p-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-sm flex items-center justify-between gap-3 flex-wrap">

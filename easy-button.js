@@ -290,7 +290,6 @@
       units: draft.units.map(function (u) {
         return Object.assign({}, u, {
           standards: u.standards.map(function (s) {
-            if (!s.teacher) return s;
             var codes = (matches && matches[s.uid]) || [];
             return Object.assign({}, s, {
               matched: codes.filter(function (c) { return lookup[c]; }).map(function (c) { return { code: c, set: lookup[c].set, text: lookup[c].text }; })
@@ -388,7 +387,8 @@
           .filter(function (s) { return s.include && String(s.description || "").trim(); })
           .map(function (s) {
             var note = s.sourceNote || "";
-            if (s.matched && s.matched.length) note += " Claude matched it to " + s.matched.map(function (m) { return m.code; }).join(", ") + ".";
+            var extra = (s.matched || []).map(function (m) { return m.code; }).filter(function (code) { return note.indexOf(code) === -1; });
+            if (extra.length) note += " Claude matched it to " + extra.join(", ") + ".";
             return { category: String(s.category || "").trim() || "General", description: String(s.description).trim(), sourceNote: note, alignsTo: s.alignsTo, teacherWritten: !!s.teacher };
           })
       };
@@ -530,16 +530,18 @@
     var run = checksToRun(info, v);
     return h("fieldset", { className: "bg-white border border-purple-200 rounded-lg p-3 space-y-2" },
       h("legend", { className: "px-1 text-sm font-semibold text-gray-900" }, props.legend || "Also check my standards"),
-      h("p", { className: "text-xs text-gray-600" }, "After sorting, Claude reads your standards and reports what it finds. It never changes your wording, and nothing is added unless you add it."),
+      h("p", { className: "text-xs text-gray-600" }, props.drafted
+        ? "After drafting, Claude checks the standards it wrote for your units and reports what it finds. Nothing is added unless you add it."
+        : "After sorting, Claude reads your standards and reports what it finds. It never changes your wording, and nothing is added unless you add it."),
       info.available && info.hasMO && h(Tick, { checked: v.mo, disabled: off, onChange: set("mo"),
         title: "Compare with the " + info.moName + ".",
-        help: "Shows which state standards each of yours covers, and which ones for this course none of yours cover." }),
+        help: props.drafted ? "Shows which state standards each drafted standard covers, and which ones for this course none of them cover." : "Shows which state standards each of yours covers, and which ones for this course none of yours cover." }),
       info.available && info.hasNational && h(Tick, { checked: v.national, disabled: off, onChange: set("national"),
         title: "Compare with national standards (" + info.nationalNames.join(", ") + ").",
         help: "The same comparison against the national standards." }),
       !info.available && h("p", { className: "text-xs text-gray-700 bg-gray-50 border border-gray-200 rounded p-2" }, info.why),
       h(Tick, { checked: v.internal, disabled: off, onChange: set("internal"),
-        title: "Look for gaps within my own standards.",
+        title: props.drafted ? "Look for gaps within the drafted standards." : "Look for gaps within my own standards.",
         help: "Units with very few standards, standards that repeat each other, topics this course usually has that none of your units cover, and units where nothing asks students to apply, analyze or create." }),
       h(Tick, { checked: v.suggest && (run.compare || run.internal), disabled: off || !(run.compare || run.internal), onChange: set("suggest"),
         title: "Suggest standards to fill the gaps.",
@@ -557,6 +559,7 @@
   // What Claude found. Matches are shown on each standard; this shows the totals, gaps, findings and suggestions.
   function CompareReport(props) {
     var c = props.check, r = c.result, ran = r.checked || {};
+    var your = props.drafted ? "the drafted" : "your", yours = props.drafted ? "the drafted standards" : "yours";
     var byUid = {};
     props.draft.units.forEach(function (u) { u.standards.forEach(function (s) { byUid[s.uid] = s; }); });
     var unitNames = props.draft.units.map(function (u) { return u.name || "Unnamed unit"; });
@@ -578,13 +581,13 @@
         heading("Compared with published standards"),
         h("p", { className: "text-sm text-gray-700" },
           c.coreCount > 0
-            ? "Claude compared your " + c.checkedCount + " standards with " + c.coreCount + " published standards for " + props.courseName + ". By Claude's reading, yours cover " + coreMatched + " of them. "
-            : "Claude compared your " + c.checkedCount + " standards with " + c.sentCount + " published standards for this grade level. ",
-          withMatch + " of your standards " + (withMatch === 1 ? "matches" : "match") + " at least one. Each match is shown under the standard as “Covers.”"),
+            ? "Claude compared " + (props.drafted ? "the " + c.checkedCount + " drafted" : "your " + c.checkedCount) + " standards with " + c.coreCount + " published standards for " + props.courseName + ". By Claude's reading, " + yours + " cover " + coreMatched + " of them. "
+            : "Claude compared " + (props.drafted ? "the " + c.checkedCount + " drafted" : "your " + c.checkedCount) + " standards with " + c.sentCount + " published standards for this grade level. ",
+          withMatch + " of " + your + " standards " + (withMatch === 1 ? "matches" : "match") + " at least one. Each match is shown under the standard as “Covers.”"),
         Object.keys(gapGroups).length === 0
-          ? h("p", { className: "text-sm text-gray-700" }, "Claude didn't find any important published standards that yours leave out.")
+          ? h("p", { className: "text-sm text-gray-700" }, "Claude didn't find any important published standards that " + yours + " leave out.")
           : h("div", { className: "space-y-3" },
-              h("p", { className: "text-sm font-semibold text-gray-800" }, "Published standards none of yours cover (" + (r.gaps || []).length + ")"),
+              h("p", { className: "text-sm font-semibold text-gray-800" }, "Published standards none of " + yours + " cover (" + (r.gaps || []).length + ")"),
               Object.keys(gapGroups).map(function (set) {
                 return h("div", { key: set, className: "space-y-1" },
                   h("div", { className: "text-xs font-semibold text-gray-600 uppercase tracking-wide" }, set),
@@ -595,9 +598,9 @@
                   })));
               }))),
       ran.internal && h("div", { className: "space-y-2" },
-        heading("Inside your own standards"),
+        heading(props.drafted ? "Inside the drafted standards" : "Inside your own standards"),
         (r.findings || []).length === 0
-          ? h("p", { className: "text-sm text-gray-700" }, "Claude didn't find gaps or repeats inside your standards.")
+          ? h("p", { className: "text-sm text-gray-700" }, "Claude didn't find gaps or repeats inside " + yours + ".")
           : h("ul", { className: "space-y-2" }, r.findings.map(function (f, i) {
               return h("li", { key: i, className: "text-sm bg-white border border-yellow-300 rounded p-2" },
                 h("span", { className: "inline-block mr-2 px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-900 text-xs font-semibold" }, FINDING_LABELS[f.type] || "Note"),
@@ -612,7 +615,7 @@
         (r.suggestions || []).length === 0
           ? h("p", { className: "text-sm text-gray-700" }, "Claude had no standards to suggest.")
           : h("div", { className: "space-y-2" },
-              h("p", { className: "text-xs text-gray-600" }, "These are Claude's drafts, not yours. Add the ones you want; each one lands in the unit you pick, marked AI-drafted, and you can edit or uncheck it there."),
+              h("p", { className: "text-xs text-gray-600" }, "These are extra standards from Claude. Add the ones you want; each one lands in the unit you pick, marked AI-drafted, and you can edit or uncheck it there."),
               r.suggestions.map(function (sg, i) {
                 var added = c.added[i];
                 var src = sg.fills && sg.fills !== "internal" ? c.lookup[sg.fills] : null;
@@ -621,7 +624,7 @@
                   h("div", { className: "flex items-center gap-2 flex-wrap text-xs" },
                     h("span", { className: "rounded-full px-2 py-0.5 bg-purple-100 text-purple-800 font-semibold" }, "Claude's suggestion"),
                     h("span", { className: "font-semibold text-gray-700" }, sg.category),
-                    h("span", { className: "text-gray-600" }, src ? "Fills: " + sg.fills + " (" + src.set + ")" : "Fills: a gap inside your own standards")),
+                    h("span", { className: "text-gray-600" }, src ? "Fills: " + sg.fills + " (" + src.set + ")" : "Fills: a gap inside " + (props.drafted ? "the draft" : "your own standards"))),
                   h("p", { className: "text-sm text-gray-900" }, sg.description),
                   sg.why && h("p", { className: "text-xs text-gray-600" }, sg.why),
                   added != null
@@ -764,7 +767,7 @@
         setInfo({ sampled: used.sampled, total: used.total, used: used.rows.length, ranked: used.ranked || 0 });
         setPhase("review");
         setCheck(null); setCheckError(""); setCheckPhase("idle");
-        if (sentMode === "paste" && checksToRun(compareInfo, checks).any) runCheck(fresh);   // the checks chosen before sorting
+        if ((sentMode === "paste" || sentMode === "units") && checksToRun(compareInfo, checks).any) runCheck(fresh);   // the checks chosen beforehand
       }).catch(function (e) {
         // a problem the teacher can fix (too long, nothing found) is shown as it is; anything else is a generic retry
         setError(e.friendly ? e.message : "The draft didn't work: " + e.message + ". Try again in a moment.");
@@ -833,18 +836,18 @@
           draft.report.skipped.length > 8 && h("div", { className: "text-xs" }, "and " + (draft.report.skipped.length - 8) + " more")),
         builtMode === "paste" && draft.report && draft.report.dropped > 0 && h("div", { role: "status", className: "p-3 bg-yellow-50 border border-yellow-300 text-yellow-900 rounded text-sm" },
           draft.report.dropped + " item" + (draft.report.dropped === 1 ? "" : "s") + " Claude returned didn't match your document word for word, so " + (draft.report.dropped === 1 ? "it was" : "they were") + " left out. If a standard of yours is missing, add it with Create Standard."),
-        builtMode === "paste" && h("div", { className: "border border-purple-300 bg-purple-100/40 rounded-lg p-4 space-y-4" },
+        (builtMode === "paste" || builtMode === "units") && h("div", { className: "border border-purple-300 bg-purple-100/40 rounded-lg p-4 space-y-4" },
           h("h4", { className: "text-base font-bold text-gray-900" }, "Check these standards"),
           checkPhase === "loading"
-            ? h("p", { role: "status", className: "text-sm text-gray-700" }, "Claude is checking your standards. This usually takes under a minute; a long list can take two.")
-            : h(CheckOptions, { info: compareInfo, value: checks, onChange: setChecks, legend: report ? "Run the checks again" : "Choose the checks" },
+            ? h("p", { role: "status", className: "text-sm text-gray-700" }, "Claude is checking the standards. This usually takes under a minute; a long list can take two.")
+            : h(CheckOptions, { info: compareInfo, value: checks, onChange: setChecks, drafted: builtMode === "units", legend: report ? "Run the checks again" : "Choose the checks" },
                 h("div", { className: "pt-1" },
                   h("button", { type: "button", onClick: function () { runCheck(draft); }, disabled: !checksToRun(compareInfo, checks).any,
                                 className: "px-4 py-2 bg-purple-700 text-white rounded-lg hover:bg-purple-800 font-semibold text-sm disabled:bg-gray-300 disabled:cursor-not-allowed" },
                     report ? "Run the checks again" : "Run the checks"),
                   report && h("span", { className: "ml-2 text-xs text-gray-600" }, "Use this after you edit, move or uncheck standards."))),
           checkError && h("div", { role: "alert", className: "p-3 bg-red-50 border border-red-300 text-red-800 rounded text-sm" }, checkError),
-          report && checkPhase !== "loading" && h(CompareReport, { check: report, draft: draft, courseName: course.name,
+          report && checkPhase !== "loading" && h(CompareReport, { check: report, drafted: builtMode === "units", draft: draft, courseName: course.name,
                                                               onAdd: addSuggestion, onPick: pickSuggestionUnit })),
         empty.length > 0 && h("div", { role: "status", className: "p-3 bg-yellow-50 border border-yellow-300 text-yellow-900 rounded text-sm" },
           "Claude couldn't write standards for " + empty.join(", ") + ". You can move a standard into it, leave it empty, or start over with a fuller description."),
@@ -969,11 +972,13 @@
         h("button", {
           type: "button", onClick: addRow, disabled: loading || rows.length >= MAX_UNITS,
           className: "px-3 py-2 border border-gray-300 bg-white rounded-lg hover:bg-gray-50 text-sm disabled:opacity-50"
-        }, rows.length >= MAX_UNITS ? "Eight units is the most" : "+ Add another unit"),
+        }, rows.length >= MAX_UNITS ? "Eight units is the most" : "+ Add another unit")),
+      h(CheckOptions, { info: compareInfo, value: checks, onChange: setChecks, disabled: loading, drafted: true }),
+      h("div", { className: "flex gap-3 flex-wrap items-center" },
         h("button", {
           onClick: build, disabled: loading,
           className: "px-5 py-3 bg-purple-700 text-white rounded-lg hover:bg-purple-800 font-semibold disabled:bg-gray-400 disabled:cursor-wait"
-        }, loading ? "Building your draft..." : "Build standards for my units"))
+        }, loading ? "Building your draft..." : checksToRun(compareInfo, checks).any ? "Build and check standards for my units" : "Build standards for my units"))
     );
 
     return h("section", { className: "no-print border border-purple-200 bg-purple-50 rounded-lg p-5 space-y-4" },
