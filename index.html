@@ -11,6 +11,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
 <script src="standards-bank.js"></script>
+<script src="standards-bank-math-add.js"></script>
 <script src="standards-bank-english.js"></script>
 <script src="standards-bank-history.js"></script>
 <script src="standards-bank-science.js"></script>
@@ -641,7 +642,35 @@ function generateStandardId(courseName, existingIds) {
 
 const countWords = (text) => text.trim().split(/\s+/).filter(Boolean).length;
 
+// A standard that has not been rated carries rated:false. Everything else (including the sample data) counts as rated.
+function isRated(p) { return !!p && p.rated !== false; }
+const UNRATED = { complexity: 0, autonomy: 0, rated: false };
+// The Rigor Scale chart puts "Rigor" in the upper right: analysis or knowledge utilization, with medium-high or high autonomy.
+function inRigorZone(p) { return isRated(p) && p.complexity >= 2 && p.autonomy >= 2; }
+function rigorText(p) { return COMPLEXITY_LABELS[p.complexity] + " · " + AUTONOMY_LABELS[p.autonomy] + " autonomy"; }
+const RIGOR_DEFS = [
+  [3, "Knowledge Utilization", "Putting together all that has been learned in order to solve more and more complex issues."],
+  [2, "Analysis", "The ability to take what has been learned and apply it to new situations."],
+  [1, "Comprehension", "Demonstrating an ability to explain in some way what the basic facts, processes, and information mean."],
+  [0, "Retrieval", "Remembering and repeating back basic facts, processes, and information."]
+];
+const RigorContext = React.createContext({ rating: {}, rateIds: () => {}, setPlacement: () => {} });
+
+// One call to the Worker for a single standard. Returns { complexity, autonomy, reason, assessments }.
+async function fetchRigor(description, department, course) {
+  if (!WORKER_URL) throw new Error("The AI service isn't connected");
+  const res = await fetch(WORKER_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ description, department, course })
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Request failed");
+  return data;
+}
+
 function rigorBadgeClass(p) {
+  if (!isRated(p)) return "border-dashed border-gray-400 bg-white text-gray-600";
   const sum = p.complexity + p.autonomy;
   if (sum <= 1) return "rigor-1";
   if (sum <= 3) return "rigor-2";
@@ -732,9 +761,11 @@ function PortraitBox({ tone, icon, title, tagline, statements, open, onToggle, n
   );
 }
 
-function RigorGrid({ placement }) {
-  // Rows run top (Knowledge Utilization) to bottom (Retrieval); columns run Low to High.
+/* The grid. With onPick, every box is a button so the teacher can place the standard themselves.
+   `placement` is the current placement (dot). If a teacher moved it off the AI's box, `aiPlacement` shows as a hollow AI marker. */
+function RigorGrid({ placement, aiPlacement, onPick }) {
   const rows = [3, 2, 1, 0];
+  const who = placement && placement.by === "teacher" ? "You" : "AI";
   return (
     <div className="overflow-x-auto">
       <div className="min-w-[420px]">
@@ -743,17 +774,32 @@ function RigorGrid({ placement }) {
             <React.Fragment key={c}>
               <div className="flex items-center justify-end pr-3 text-xs text-gray-600 h-12">{COMPLEXITY_LABELS[c]}</div>
               {[0, 1, 2, 3].map(a => {
-                const here = placement.complexity === c && placement.autonomy === a;
-                return (
-                  <div key={a} className="border border-gray-300 bg-white h-12 flex items-center justify-center">
+                const here = placement && isRated(placement) && placement.complexity === c && placement.autonomy === a;
+                const aiHere = aiPlacement && !here && aiPlacement.complexity === c && aiPlacement.autonomy === a && placement && placement.by === "teacher";
+                const zone = c >= 2 && a >= 2;
+                const cls = "border border-gray-300 h-12 flex items-center justify-center relative " + (zone ? "bg-emerald-50" : "bg-white");
+                const inner = (
+                  <>
+                    {zone && c === 3 && a === 3 && !here && <span className="absolute top-0.5 right-1 text-[10px] font-semibold text-emerald-700">Rigor</span>}
                     {here && (
-                      <div className="flex items-center gap-1" title="AI placement">
-                        <div className="w-4 h-4 rounded-full bg-indigo-600 shadow"></div>
-                        <span className="text-xs font-bold text-indigo-700">AI</span>
+                      <div className="flex items-center gap-1" title={who === "You" ? "Your placement" : "AI placement"}>
+                        <div className={"w-4 h-4 rounded-full shadow " + (who === "You" ? "bg-emerald-600" : "bg-indigo-600")}></div>
+                        <span className={"text-xs font-bold " + (who === "You" ? "text-emerald-700" : "text-indigo-700")}>{who}</span>
                       </div>
                     )}
-                  </div>
+                    {aiHere && (
+                      <div className="flex items-center gap-1" title="Where the AI placed it">
+                        <div className="w-4 h-4 rounded-full border-2 border-indigo-400"></div>
+                        <span className="text-xs font-semibold text-indigo-500">AI</span>
+                      </div>
+                    )}
+                  </>
                 );
+                return onPick ? (
+                  <button key={a} type="button" className={cls + " hover:bg-indigo-50 focus-visible:z-10"}
+                    aria-label={"Place at " + COMPLEXITY_LABELS[c] + ", " + AUTONOMY_LABELS[a] + " autonomy"}
+                    aria-pressed={!!here} onClick={() => onPick(c, a)}>{inner}</button>
+                ) : (<div key={a} className={cls}>{inner}</div>);
               })}
             </React.Fragment>
           ))}
@@ -768,6 +814,103 @@ function RigorGrid({ placement }) {
   );
 }
 
+/* A small 4 x 4 picture of where a standard sits, for cards and outlines. */
+function MiniRigor({ placement }) {
+  const rated = isRated(placement);
+  return (
+    <span className="inline-grid shrink-0 align-middle" style={{ gridTemplateColumns: "repeat(4, 9px)", gap: "1px" }}
+      role="img" aria-label={rated ? "Rigor map: " + rigorText(placement) : "Rigor not yet rated"}>
+      {[3, 2, 1, 0].map(c => [0, 1, 2, 3].map(a => {
+        const here = rated && placement.complexity === c && placement.autonomy === a;
+        const zone = c >= 2 && a >= 2;
+        return <span key={c + "-" + a} style={{ width: 9, height: 9, borderRadius: 2, background: here ? "#4338ca" : (zone ? "#d1fae5" : "#e5e7eb") }}></span>;
+      }))}
+    </span>
+  );
+}
+
+/* The one-glance rigor tag shown on every standard: mini map + level + (when it applies) the Rigor zone mark. */
+function RigorChip({ standard }) {
+  const ctx = React.useContext(RigorContext);
+  const p = standard.placement;
+  const pending = !!ctx.rating[standard.id];
+  if (pending) {
+    return <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold border border-gray-300 bg-gray-50 text-gray-600 animate-pulse">Rating rigor…</span>;
+  }
+  return (
+    <span className={"inline-flex items-center gap-2 pl-2 pr-3 py-1 rounded-full text-xs font-semibold border " + rigorBadgeClass(p)}>
+      <MiniRigor placement={p} />
+      {isRated(p) ? <span>Rigor: {rigorText(p)}</span> : <span>Rigor: not yet rated</span>}
+      {inRigorZone(p) && <span className="text-emerald-800 bg-emerald-100 border border-emerald-300 rounded px-1.5 py-0.5">Rigor zone</span>}
+    </span>
+  );
+}
+
+/* The full rigor panel: grid, the reason, the level definitions, and (when onPick is given) a way to move the dot. */
+function RigorPanel({ placement, aiPlacement, reason, pending, error, onRate, onPick, onUseAI, assessments, intro }) {
+  const rated = isRated(placement);
+  const teacher = rated && placement.by === "teacher";
+  return (
+    <div className="p-5 bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-lg">
+      <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
+        <h3 className="font-bold text-gray-800 flex items-center gap-2">
+          <Icon name="sparkles" className="w-5 h-5 text-indigo-600" /> Rigor Scale
+        </h3>
+        {rated && (
+          <span className={"inline-flex items-center gap-2 pl-2 pr-3 py-1 rounded-full text-xs font-semibold border " + rigorBadgeClass(placement)}>
+            <MiniRigor placement={placement} />{rigorText(placement)}
+            {inRigorZone(placement) && <span className="text-emerald-800 bg-emerald-100 border border-emerald-300 rounded px-1.5 py-0.5">Rigor zone</span>}
+          </span>
+        )}
+      </div>
+      <p className="text-sm text-gray-600 mb-3">
+        {intro || "Rigor occurs when students can do high order tasks with little to no outside assistance."}
+      </p>
+      {pending && <p className="text-sm text-indigo-700 mb-3">Rating this standard on the Rigor Scale…</p>}
+      {!pending && !rated && (
+        <div className="mb-3 p-3 rounded bg-white border border-dashed border-gray-400 text-sm text-gray-700 flex items-center justify-between gap-3 flex-wrap">
+          <span>This standard has not been placed on the Rigor Scale yet.</span>
+          {onRate && <button type="button" onClick={onRate} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium">Rate with AI</button>}
+        </div>
+      )}
+      {error && <p role="alert" className="text-sm text-red-700 mb-3">{error}</p>}
+      {rated && (
+        <>
+          {reason && !teacher && <p className="text-sm text-gray-700 mb-3"><span className="font-semibold">Why:</span> {reason}</p>}
+          {teacher && (
+            <p className="text-sm text-emerald-800 mb-3">
+              Placed by you.
+              {aiPlacement && <> The AI suggested <span className="font-semibold">{rigorText(aiPlacement)}</span>.</>}
+              {onUseAI && aiPlacement && <> <button type="button" onClick={onUseAI} className="underline font-medium">Use the AI’s placement</button></>}
+            </p>
+          )}
+          <div className="bg-white p-4 rounded-lg mb-3">
+            <RigorGrid placement={placement} aiPlacement={aiPlacement} onPick={onPick} />
+          </div>
+          {onPick && <p className="text-xs text-gray-600 mb-3">You know your students best. Click any box to place this standard there yourself.</p>}
+        </>
+      )}
+      <details className="text-sm text-gray-700">
+        <summary className="cursor-pointer font-medium text-indigo-800">What do the levels mean?</summary>
+        <ul className="mt-2 space-y-1">
+          {RIGOR_DEFS.map(d => <li key={d[1]}><span className="font-semibold">{d[1]}.</span> {d[2]}</li>)}
+          <li><span className="font-semibold">Autonomy.</span> How much outside help students need: Low, Medium, Medium High, High.</li>
+        </ul>
+      </details>
+      {assessments && assessments.length > 0 && (
+        <div className="mt-4">
+          <h4 className="font-semibold text-sm text-gray-700 mb-2">Suggested assessments (optional):</h4>
+          <div className="flex flex-wrap gap-2">
+            {assessments.map((a, i) => (
+              <span key={i} className="px-3 py-1 bg-indigo-100 text-indigo-800 rounded-lg text-sm leading-snug max-w-full">{a}</span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* =====================================================================
    STANDARD CARD
    ===================================================================== */
@@ -778,7 +921,7 @@ function StandardCard({ standard, showPath, portraits, canReview, onApprove, onR
   const isDraft = standard.status === "draft";
   const portrait = portraits[standard.department];
   const portraitName = portrait ? portrait.title.replace(" Department Portrait", "") : standard.department;
-  const rigorLabel = COMPLEXITY_LABELS[standard.placement.complexity] + " · " + AUTONOMY_LABELS[standard.placement.autonomy] + " autonomy";
+  const rigor = React.useContext(RigorContext);
 
   return (
     <div className="bg-white rounded-lg shadow-md overflow-hidden border-l-4"
@@ -795,7 +938,7 @@ function StandardCard({ standard, showPath, portraits, canReview, onApprove, onR
               <StatusBadge status={standard.status} />
               <span className="font-semibold text-blue-600">{standard.id}</span>
               <span className="text-sm text-gray-600">{standard.category}</span>
-              <span className={"px-3 py-1 rounded-full text-xs font-medium border " + rigorBadgeClass(standard.placement)}>{rigorLabel}</span>
+              <RigorChip standard={standard} />
             </div>
             <p className={"text-gray-700 " + (isDraft ? "italic" : "")}>{standard.description}</p>
             {isDraft && (
@@ -828,14 +971,13 @@ function StandardCard({ standard, showPath, portraits, canReview, onApprove, onR
               })}
             </div>
           </div>
-          <div>
-            <h4 className="font-semibold text-sm text-gray-700 mb-2">Suggested assessments:</h4>
-            <div className="flex flex-wrap gap-2">
-              {standard.assessments.map((a, i) => (
-                <span key={i} className="px-3 py-1 bg-blue-100 text-blue-700 rounded-lg text-sm leading-snug max-w-full">{a}</span>
-              ))}
-            </div>
-          </div>
+          <RigorPanel placement={standard.placement} aiPlacement={standard.aiPlacement}
+            reason={standard.placement && standard.placement.reason}
+            pending={!!rigor.rating[standard.id]}
+            onRate={() => rigor.rateIds([standard.id])}
+            onPick={(c, a) => rigor.setPlacement(standard.id, c, a)}
+            onUseAI={standard.aiPlacement ? () => rigor.setPlacement(standard.id, standard.aiPlacement.complexity, standard.aiPlacement.autonomy, true) : null}
+            assessments={standard.assessments} />
 
           {isDraft && canReview && !rejecting && (
             <div className="flex gap-2 pt-2">
@@ -1186,6 +1328,8 @@ function CreateStandardView({ standards, units, onSave, onAddUnit, currentUser }
   const [notice, setNotice] = useState("");
   const [rewording, setRewording] = useState(false);
   const [bankRef, setBankRef] = useState("");
+  const [override, setOverride] = useState(null);   // the teacher's own placement, if they moved the dot
+  const [saving, setSaving] = useState(false);
 
   const set = (patch) => setForm(prev => ({ ...prev, ...patch }));
   const portrait = DEPARTMENT_PORTRAITS[form.department];
@@ -1206,9 +1350,11 @@ function CreateStandardView({ standards, units, onSave, onAddUnit, currentUser }
   const pickFromBank = async (item) => {
     setShowBank(false);
     setError(""); setNotice("");
+    setOverride(null);
     if (item.source === "honors") {
       set({ description: item.text });
       setBankRef("Honors bank: " + item.ref);
+      analyze(item.text);
       return;
     }
     setBankRef(item.source + ": " + item.ref);
@@ -1217,6 +1363,7 @@ function CreateStandardView({ standards, units, onSave, onAddUnit, currentUser }
       setError("The rewording service isn't connected, so the standard was added as written. Edit it to begin with “Students will...”");
       return;
     }
+    let finalText = item.text;
     setRewording(true);
     try {
       const res = await fetch(WORKER_URL, {
@@ -1226,6 +1373,7 @@ function CreateStandardView({ standards, units, onSave, onAddUnit, currentUser }
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Request failed");
+      finalText = data.text;
       set({ description: data.text });
     } catch (e) {
       set({ description: item.text });
@@ -1233,6 +1381,7 @@ function CreateStandardView({ standards, units, onSave, onAddUnit, currentUser }
     } finally {
       setRewording(false);
     }
+    analyze(finalText);   // every standard gets a rigor rating, including ones picked straight from the bank
   };
 
   const togglePog = (code) => {
@@ -1240,32 +1389,29 @@ function CreateStandardView({ standards, units, onSave, onAddUnit, currentUser }
     else if (pogs.length < 3) setPogs([...pogs, code]);
   };
 
-  const analyze = async () => {
+  const analyze = async (textArg) => {
+    const text = typeof textArg === "string" ? textArg : form.description;
     setError("");
-    if (form.description.trim().length < 10) { setError("Enter the full standard description before analyzing."); return; }
+    if (text.trim().length < 10) { setError("Enter the full standard description before rating it."); return null; }
     if (!WORKER_URL) {
       setError("The AI analysis service isn't connected yet. Set WORKER_URL at the top of the script to your Cloudflare Worker address.");
-      return;
+      return null;
     }
     setAnalyzing(true);
     try {
-      const res = await fetch(WORKER_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description: form.description, department: form.department, course: form.course })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Request failed");
+      const data = await fetchRigor(text, form.department, form.course);
       setAnalysis(data);
-      setAnalyzedText(form.description);
+      setAnalyzedText(text);
+      return data;
     } catch (e) {
-      setError("The analysis didn't work: " + e.message + ". Try again in a moment.");
+      setError("The rigor rating didn't work: " + e.message + ". Try again in a moment.");
+      return null;
     } finally {
       setAnalyzing(false);
     }
   };
 
-  const submit = (asDraft) => {
+  const submit = async (asDraft) => {
     setError(""); setNotice("");
     if (!form.school || !form.department || !form.course || !form.category.trim() || !form.description.trim()) {
       setError("Fill in school, department, course, category, and description."); return;
@@ -1276,20 +1422,33 @@ function CreateStandardView({ standards, units, onSave, onAddUnit, currentUser }
     if (pogs.length < 1) { setError("Choose at least one Department Portrait statement."); return; }
     if (pogs.length > 3) { setError("Choose no more than three Department Portrait statements."); return; }
 
-    const placement = analysis ? { complexity: analysis.complexity, autonomy: analysis.autonomy } : { complexity: 0, autonomy: 0 };
+    // Every saved standard is rated. If this one has not been rated yet (or was edited since), rate it now.
+    let result = analysis && !stale ? analysis : null;
+    if (!result && WORKER_URL) {
+      setSaving(true);
+      try { result = await fetchRigor(form.description.trim(), form.department, form.course); setAnalysis(result); setAnalyzedText(form.description); }
+      catch (e) { result = null; }
+      setSaving(false);
+    }
+    const aiPlacement = result ? { complexity: result.complexity, autonomy: result.autonomy, reason: result.reason || "" } : undefined;
+    const placement = override
+      ? { complexity: override.complexity, autonomy: override.autonomy, rated: true, by: "teacher" }
+      : result ? { complexity: result.complexity, autonomy: result.autonomy, rated: true, by: "ai", reason: result.reason || "" }
+      : UNRATED;
     if (form.unit) onAddUnit(unitKey, form.unit);
     onSave({
       id: standardId, school: form.school, department: form.department, course: form.course,
       category: form.category.trim(), description: form.description.trim(),
-      placement, status: "draft", submitted: !asDraft,
+      placement, aiPlacement, status: "draft", submitted: !asDraft,
       createdBy: currentUser, createdDate: new Date().toISOString().slice(0, 10),
-      alignsTo: pogs, assessments: analysis ? analysis.assessments : [], unit: form.unit || ""
+      alignsTo: pogs, assessments: result ? (result.assessments || []) : [], unit: form.unit || ""
     });
     setNotice(asDraft
       ? "Saved as a draft: " + standardId + ". It stays in this browser tab only during the demo."
       : "Submitted for approval: " + standardId + ". In the full version your department chair would get an email with a review link.");
     if (form.unit) setNotice(prev => prev + " Placed in " + form.unit + ".");
-    setForm(EMPTY_FORM); setPogs([]); setAnalysis(null); setAnalyzedText(""); setBankRef("");
+    if (!result && !override) setNotice(prev => prev + " Rigor could not be rated right now, so it is marked “not yet rated.” Open the standard in Browse Standards and choose Rate with AI.");
+    setForm(EMPTY_FORM); setPogs([]); setAnalysis(null); setAnalyzedText(""); setBankRef(""); setOverride(null);
   };
 
   return (
@@ -1363,33 +1522,24 @@ function CreateStandardView({ standards, units, onSave, onAddUnit, currentUser }
             {bankRef && !rewording && <p className="text-xs text-gray-500 mt-1">Based on {bankRef}</p>}
           </FormField>
 
-          <div>
-            <button onClick={analyze} disabled={analyzing || !form.description.trim()}
-              className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center gap-2">
-              <Icon name="sparkles" className="w-5 h-5" />
-              {analyzing ? "Analyzing..." : "Analyze Standard with AI"}
-            </button>
-          </div>
-
+          <RigorPanel
+            placement={override ? { complexity: override.complexity, autonomy: override.autonomy, rated: true, by: "teacher" }
+              : analysis ? { complexity: analysis.complexity, autonomy: analysis.autonomy, rated: true, by: "ai" } : UNRATED}
+            aiPlacement={analysis}
+            reason={analysis && analysis.reason}
+            pending={analyzing}
+            onRate={() => analyze()}
+            onPick={analysis || override ? (c, a) => setOverride({ complexity: c, autonomy: a }) : null}
+            onUseAI={() => setOverride(null)}
+            assessments={analysis ? analysis.assessments : []}
+            intro={"Every standard gets a rigor rating, whether you write it, pull it from the bank, or Claude drafts it. It is rated automatically when you pick a bank standard or save. Rigor occurs when students can do high order tasks with little to no outside assistance."} />
+          {stale && <p className="text-xs rounded border border-amber-300 bg-amber-50 text-amber-900 px-3 py-2">The description has changed since it was rated. It will be rated again when you save, or choose Rate again now.</p>}
           {analysis && (
-            <div className="p-6 bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-lg">
-              <h3 className="font-bold text-gray-800 mb-1 flex items-center gap-2">
-                <Icon name="sparkles" className="w-5 h-5 text-indigo-600" /> AI Rigor Analysis
-              </h3>
-              <p className="text-sm text-gray-600 mb-4">
-                {COMPLEXITY_LABELS[analysis.complexity]} complexity, {AUTONOMY_LABELS[analysis.autonomy].toLowerCase()} autonomy.
-                If this doesn't match your intent, revise the description and analyze again.
-              </p>
-              {stale && <p className="text-xs rounded border border-amber-300 bg-amber-50 text-amber-900 px-3 py-2 mb-4">The description has changed since this analysis. Analyze again to update it.</p>}
-              <div className="bg-white p-4 rounded-lg mb-4">
-                <RigorGrid placement={analysis} />
-              </div>
-              <h4 className="font-semibold text-sm text-gray-700 mb-2">Suggested assessments (optional):</h4>
-              <div className="flex flex-wrap gap-2">
-                {analysis.assessments.map((a, i) => (
-                  <span key={i} className="px-3 py-1 bg-indigo-100 text-indigo-800 rounded-lg text-sm leading-snug max-w-full">{a}</span>
-                ))}
-              </div>
+            <div>
+              <button type="button" onClick={() => analyze()} disabled={analyzing || !form.description.trim()}
+                className="px-4 py-2 border border-indigo-300 text-indigo-800 rounded-lg hover:bg-indigo-50 text-sm font-medium disabled:opacity-50">
+                {analyzing ? "Rating..." : "Rate again with AI"}
+              </button>
             </div>
           )}
 
@@ -1421,11 +1571,11 @@ function CreateStandardView({ standards, units, onSave, onAddUnit, currentUser }
           )}
 
           <div className="flex gap-4 pt-4 border-t flex-wrap">
-            <button onClick={() => submit(true)} className="flex-1 px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-semibold">
-              Save as Draft
+            <button onClick={() => submit(true)} disabled={saving || analyzing} className="flex-1 px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-semibold disabled:opacity-60">
+              {saving ? "Rating and saving..." : "Save as Draft"}
             </button>
-            <button onClick={() => submit(false)} className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold">
-              Submit for Approval
+            <button onClick={() => submit(false)} disabled={saving || analyzing} className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold disabled:opacity-60">
+              {saving ? "Rating and saving..." : "Submit for Approval"}
             </button>
           </div>
         </div>
@@ -1568,6 +1718,7 @@ function OutlineStandard({ s, unitList, suggestion, onAssignUnit, onAddUnit }) {
         <span className="text-gray-600">{s.category}</span>
         {draft && <span className="italic text-yellow-700 font-medium">DRAFT</span>}
         {s.aiSuggested && <span className="text-xs bg-purple-100 text-purple-800 border border-purple-300 rounded px-2 py-0.5">AI-suggested</span>}
+        <RigorChip standard={s} />
       </div>
       <p className={"text-sm text-gray-800 " + (draft ? "italic" : "")}>{s.description}</p>
       {s.sourceNote && <p className="text-xs text-gray-500 mt-1">{s.sourceNote}</p>}
@@ -2537,6 +2688,10 @@ function App() {
   const [connVersion, setConnVersion] = useState(0);        // bumps when a connection changes, so every screen redraws
   const effectiveView = ((view === "sheets" && !canSheets) || (view === "connections" && !canConnect)) ? "outline" : view;
   const [standards, setStandards] = useState(SAMPLE_STANDARDS);
+  const standardsRef = React.useRef(standards);
+  standardsRef.current = standards;
+  const [rating, setRating] = useState({});        // ids being rated right now
+  const [rateError, setRateError] = useState("");
   const [units, setUnits] = useState({
     [courseKey("Middle School", "Mathematics", "Algebra 1")]: ["Unit 1: Linear Equations", "Unit 2: Factoring and Quadratics"]
   });
@@ -2569,6 +2724,56 @@ function App() {
         ? Object.assign({}, s, { unit: n }) : s));
   };
   const assignUnit = (id, unit) => setStandards(prev => prev.map(s => s.id === id ? Object.assign({}, s, { unit: unit }) : s));
+  // Rates standards on the Rigor Scale (batches of up to 30 per course). A teacher's own placement is never overwritten.
+  const rateIds = async (ids, fresh) => {
+    const pool = (fresh || standardsRef.current).filter(s => ids.includes(s.id));
+    if (pool.length === 0) return;
+    if (!WORKER_URL) { setRateError("The AI service isn't connected, so rigor could not be rated."); return; }
+    setRateError("");
+    setRating(prev => { const n = Object.assign({}, prev); pool.forEach(s => { n[s.id] = true; }); return n; });
+    const groups = {};
+    pool.forEach(s => { const k = s.department + "|" + s.course; (groups[k] = groups[k] || []).push(s); });
+    const results = {};
+    let failed = 0;
+    for (const k of Object.keys(groups)) {
+      const list = groups[k];
+      for (let i = 0; i < list.length; i += 30) {
+        const chunk = list.slice(i, i + 30);
+        try {
+          const res = await fetch(WORKER_URL, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: "rate_batch", department: chunk[0].department, course: chunk[0].course,
+              items: chunk.map(s => ({ id: s.id, description: s.description })) })
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Request failed");
+          let got = 0;
+          data.ratings.forEach(r => { results[r.id] = r; got++; });
+          failed += Math.max(0, chunk.length - got);
+        } catch (e) { failed += chunk.length; }
+      }
+    }
+    setStandards(prev => prev.map(s => {
+      const r = results[s.id];
+      if (!r) return s;
+      const ai = { complexity: r.complexity, autonomy: r.autonomy, reason: r.reason || "" };
+      if (s.placement && s.placement.by === "teacher") return Object.assign({}, s, { aiPlacement: ai });
+      return Object.assign({}, s, { placement: { complexity: r.complexity, autonomy: r.autonomy, rated: true, by: "ai", reason: r.reason || "" }, aiPlacement: ai });
+    }));
+    setRating(prev => { const n = Object.assign({}, prev); pool.forEach(s => { delete n[s.id]; }); return n; });
+    if (failed) setRateError("Rigor could not be rated for " + failed + " standard" + (failed > 1 ? "s" : "") + ". They are marked “not yet rated.” Use “Rate them now” to try again.");
+  };
+  // The teacher places a standard on the grid themselves (or hands it back to the AI's placement).
+  const setPlacement = (id, c, a, back) => setStandards(prev => prev.map(s => {
+    if (s.id !== id) return s;
+    const ai = s.aiPlacement || (s.placement && s.placement.by === "ai" && isRated(s.placement)
+      ? { complexity: s.placement.complexity, autonomy: s.placement.autonomy, reason: s.placement.reason || "" } : undefined);
+    const placement = back
+      ? { complexity: c, autonomy: a, rated: true, by: "ai", reason: (ai && ai.reason) || "" }
+      : { complexity: c, autonomy: a, rated: true, by: "teacher" };
+    return Object.assign({}, s, { placement, aiPlacement: ai });
+  }));
+  const unratedIds = standards.filter(s => !isRated(s.placement) && !rating[s.id]).map(s => s.id);
   // Easy button: adds the teacher-reviewed draft (units + standards) to a course outline.
   const applyEasyDraft = (course, draftUnits) => {
     const key = courseKey(course.school, course.department, course.name);
@@ -2577,23 +2782,22 @@ function App() {
       const fresh = draftUnits.map(u => u.name).filter((n, i, arr) => !current.includes(n) && arr.indexOf(n) === i);
       return Object.assign({}, prev, { [key]: current.concat(fresh) });
     });
-    setStandards(prev => {
-      const ids = prev.map(s => s.id);
-      const today = new Date().toISOString().slice(0, 10);
-      const created = [];
-      draftUnits.forEach(u => u.standards.forEach(st => {
-        const id = generateStandardId(course.name, ids);
-        ids.push(id);
-        created.push({
-          id: id, unit: u.name, school: course.school, department: course.department, course: course.name,
-          category: st.category, description: st.description,
-          placement: { complexity: 0, autonomy: 0 }, status: "draft", submitted: false,
-          createdBy: DEMO_USER, createdDate: today,
-          alignsTo: st.alignsTo || [], assessments: [], aiSuggested: !st.teacherWritten, sourceNote: st.sourceNote
-        });
-      }));
-      return prev.concat(created);
-    });
+    const ids = standardsRef.current.map(s => s.id);
+    const today = new Date().toISOString().slice(0, 10);
+    const created = [];
+    draftUnits.forEach(u => u.standards.forEach(st => {
+      const id = generateStandardId(course.name, ids);
+      ids.push(id);
+      created.push({
+        id: id, unit: u.name, school: course.school, department: course.department, course: course.name,
+        category: st.category, description: st.description,
+        placement: UNRATED, status: "draft", submitted: false,
+        createdBy: DEMO_USER, createdDate: today,
+        alignsTo: st.alignsTo || [], assessments: [], aiSuggested: !st.teacherWritten, sourceNote: st.sourceNote
+      });
+    }));
+    setStandards(prev => prev.concat(created));
+    rateIds(created.map(c => c.id), created);     // every standard is rated, wherever it came from
   };
   const approve = (id) => setStandards(prev => prev.map(s => s.id === id ? { ...s, status: "approved" } : s));
   const reject = (id, comment) => {
@@ -2652,6 +2856,19 @@ function App() {
       </nav>
 
       <main className="wca-wrap wca-main">
+        {(effectiveView === "browse" || effectiveView === "outline") && (rateError || unratedIds.length > 0 || Object.keys(rating).length > 0) && (
+          <div role="status" className="no-print mb-4 p-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-sm flex items-center justify-between gap-3 flex-wrap">
+            <span>
+              {Object.keys(rating).length > 0
+                ? "Rating " + Object.keys(rating).length + " standard" + (Object.keys(rating).length > 1 ? "s" : "") + " on the Rigor Scale…"
+                : (rateError || unratedIds.length + " standard" + (unratedIds.length > 1 ? "s are" : " is") + " not yet rated on the Rigor Scale.")}
+            </span>
+            {Object.keys(rating).length === 0 && unratedIds.length > 0 && (
+              <button type="button" onClick={() => rateIds(unratedIds)} className="px-3 py-1.5 bg-amber-600 text-white rounded-lg hover:bg-amber-700 font-medium">Rate them now</button>
+            )}
+          </div>
+        )}
+        <RigorContext.Provider value={{ rating, rateIds, setPlacement }}>
         {effectiveView === "browse" && (
           <BrowseView standards={standards} onApprove={approve} onReject={reject}
             userRole={userRole} currentUser={DEMO_USER} chairDepartment={chairDept}
@@ -2661,6 +2878,7 @@ function App() {
         )}
         {effectiveView === "create" && <CreateStandardView standards={standards} units={units} onSave={addStandard} onAddUnit={addUnit} currentUser={DEMO_USER} />}
         {effectiveView === "outline" && <OutlineView standards={standards} units={units} onAddUnit={addUnit} onAssignUnit={assignUnit} onApplyDraft={applyEasyDraft} onRenameUnit={renameUnit} />}
+        </RigorContext.Provider>
         {effectiveView === "connections" && <SetConnectionsView key={userRole + ":" + chairDept} userRole={userRole} chairDepartment={chairDept} currentUser={DEMO_USER} version={connVersion} onChange={() => setConnVersion(v => v + 1)} />}
         {effectiveView === "sheets" && <FamilySheetsView standards={standards} portraits={DEPARTMENT_PORTRAITS} west={WESTMINSTER_PORTRAIT} courses={COURSES} demo={IS_DEMO_DATA} />}
       </main>
