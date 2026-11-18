@@ -856,7 +856,8 @@ const AUTONOMY_DEFS = [
 ];
 function RigorKey({ defaultOpen }) {
   const example = { complexity: 2, autonomy: 2, rated: true, by: "ai" };
-  const cell = 30;
+  const cell = 32;
+  const colW = 64;
   return (
     <details open={!!defaultOpen} className="no-print mb-4 bg-white border border-indigo-200 rounded-lg">
       <summary className="cursor-pointer px-4 py-3 font-semibold text-indigo-900">How to read the rigor tags</summary>
@@ -867,26 +868,33 @@ function RigorKey({ defaultOpen }) {
             Going <span className="font-semibold">up</span> means harder thinking. Going <span className="font-semibold">right</span> means
             students need less help from the teacher.
           </p>
-          <div className="inline-block">
-            <div className="flex">
-              <div className="flex flex-col justify-around text-right pr-2" style={{ height: cell * 4 + 6, width: 150 }}>
-                {RIGOR_DEFS.map(d => <span key={d[1]} className="text-xs text-gray-700 leading-tight" style={{ height: cell }}>{d[1]}</span>)}
+          <div className="overflow-x-auto pb-1">
+            <div className="inline-flex items-stretch">
+              <div className="flex items-center justify-center pr-2" style={{ width: 22 }}>
+                <span className="text-xs font-semibold text-gray-700 whitespace-nowrap"
+                  style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}>Complexity (how hard the thinking is)</span>
               </div>
               <div>
-                <div className="grid" style={{ gridTemplateColumns: "repeat(4, " + cell + "px)", gap: 2 }}>
-                  {[3, 2, 1, 0].map(c => [0, 1, 2, 3].map(a => {
-                    const here = c === example.complexity && a === example.autonomy;
-                    const zone = c >= 2 && a >= 2;
-                    return <div key={c + "-" + a} style={{ width: cell, height: cell, borderRadius: 4, background: here ? "#4338ca" : (zone ? "#a7f3d0" : "#e5e7eb") }}></div>;
-                  }))}
+                <div className="flex">
+                  <div className="grid text-right pr-2" style={{ gridTemplateRows: "repeat(4, " + cell + "px)", rowGap: 2, width: 150 }}>
+                    {RIGOR_DEFS.map(d => <span key={d[1]} className="text-xs text-gray-700 flex items-center justify-end leading-tight">{d[1]}</span>)}
+                  </div>
+                  <div>
+                    <div className="grid" style={{ gridTemplateColumns: "repeat(4, " + colW + "px)", gridTemplateRows: "repeat(4, " + cell + "px)", gap: 2 }}>
+                      {[3, 2, 1, 0].map(c => [0, 1, 2, 3].map(a => {
+                        const here = c === example.complexity && a === example.autonomy;
+                        const zone = c >= 2 && a >= 2;
+                        return <div key={c + "-" + a} style={{ borderRadius: 4, background: here ? "#4338ca" : (zone ? "#a7f3d0" : "#e5e7eb") }}></div>;
+                      }))}
+                    </div>
+                    <div className="grid mt-1" style={{ gridTemplateColumns: "repeat(4, " + colW + "px)", gap: 2 }}>
+                      {AUTONOMY_LABELS.map(l => <span key={l} className="text-xs text-gray-700 text-center leading-tight">{l}</span>)}
+                    </div>
+                    <div className="text-xs font-semibold text-gray-700 text-center mt-2">Autonomy (how little help students need)</div>
+                  </div>
                 </div>
-                <div className="grid mt-1" style={{ gridTemplateColumns: "repeat(4, " + cell + "px)", gap: 2 }}>
-                  {AUTONOMY_LABELS.map(l => <span key={l} className="text-[10px] text-gray-700 text-center leading-tight">{l}</span>)}
-                </div>
-                <div className="text-xs font-semibold text-gray-700 text-center mt-1">Autonomy (how little help)</div>
               </div>
             </div>
-            <div className="text-xs font-semibold text-gray-700 mt-1">↑ Complexity (how hard the thinking is)</div>
           </div>
           <ul className="text-sm text-gray-700 mt-3 space-y-1">
             <li><span className="inline-block align-middle mr-2" style={{ width: 14, height: 14, borderRadius: 3, background: "#4338ca" }}></span>This standard (example: Analysis, Medium High)</li>
