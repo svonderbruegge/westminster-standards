@@ -657,6 +657,7 @@
     var _checks = useState({ mo: false, national: false, internal: false, suggest: false }), checks = _checks[0], setChecks = _checks[1];
     var _cphase = useState("idle"), checkPhase = _cphase[0], setCheckPhase = _cphase[1];
     var _cerr = useState(""), checkError = _cerr[0], setCheckError = _cerr[1];
+    var _submit = useState(true), submitNow = _submit[0], setSubmitNow = _submit[1];   // send kept standards to the chair now
     var _report = useState(null), report = _report[0], setCheck = _report[1];   // what Claude found ("check" is the unit form)
 
     var existing = props.existingCount || 0;
@@ -777,13 +778,18 @@
       var units = selectedUnits(draft);
       var n = units.reduce(function (sum, u) { return sum + u.standards.length; }, 0);
       if (n === 0) { setError("Check at least one standard to add."); return; }
-      props.onApply(units, draft.attribution);
+      props.onApply(units, draft.attribution, { submit: submitNow });
       var fromClaude = units.reduce(function (sum, u) { return sum + u.standards.filter(function (s) { return !s.teacherWritten; }).length; }, 0);
       setDoneMsg(builtMode === "paste"
         ? "Added " + n + " standards in " + units.length + " units" + (fromClaude
             ? ": " + (n - fromClaude) + " in your own words and " + fromClaude + " of Claude's suggestions, marked AI-suggested."
-            : ", in your own words.") + " They are saved as drafts and still need a chair's approval."
-        : "Added " + n + " draft standards in " + units.length + " units. They are marked AI-suggested and still need a chair's approval.");
+            : ", in your own words.") + " "
+        : "Added " + n + " draft standards in " + units.length + " units. They are marked AI-suggested. ");
+      setDoneMsg(function (m) {
+        return m + (submitNow
+          ? "They were sent for approval and now wait in the department chair's \u201CPending My Approval\u201D list."
+          : "They are private drafts. To send them for approval later, open Browse Standards, choose this course, and click \u201CSubmit for approval\u201D on each one.");
+      });
       setCheck(null); setCheckPhase("idle"); setCheckError("");
       if (builtMode === "units") { setRows([{ name: "", about: "" }]); setShowErrors(false); }
       if (builtMode === "paste") { setPasteText(""); setShowErrors(false); }
@@ -853,6 +859,10 @@
         })),
         draft.attribution && h("p", { className: "text-xs text-gray-500" }, draft.attribution),
         existing > 0 && h("p", { className: "text-xs text-gray-600" }, "This course already has " + existing + " standards. The ones you keep are added alongside them."),
+        h(Tick, { checked: submitNow, onChange: setSubmitNow,
+          title: "Send these for approval when I add them.",
+          help: submitNow ? "They go straight to the department chair's \u201CPending My Approval\u201D list (for a chair, that is your own list)."
+                          : "They stay private drafts. You can submit each one later from Browse Standards." }),
         h("div", { className: "flex gap-3 flex-wrap items-center" },
           h("button", {
             onClick: apply, disabled: selected === 0,

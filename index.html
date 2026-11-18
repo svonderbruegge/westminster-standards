@@ -465,9 +465,15 @@ const DEPARTMENT_PORTRAITS = {
     ]
   },
   "Science": {
-    title: "Science Department Portrait", status: "empty",
-    tagline: "Science Department Graduates will be people who...",
-    standards: promptsOnly("SCI")
+    title: "Science Department Portrait", status: "complete",
+    tagline: "Westminster Science Department Graduates will be",
+    standards: [
+      { code: "SCI-POG-1", description: "Enjoyers of creation because they know their place and status as image bearers." },
+      { code: "SCI-POG-2", description: "Keepers of the earth because they know their place and status as image bearers." },
+      { code: "SCI-POG-3", description: "Delighted Workers toward restoration because they know their place and status as image bearers." },
+      { code: "SCI-POG-4", description: "Sharers, of an ever-deepening conviction of the reality of God because they know their place and status as image bearers" },
+      { code: "SCI-POG-5", description: "Embracers of the divine purpose of struggle because they know their place and status as image bearers." }
+    ]
   },
   "Fine Arts": {
     title: "Fine Arts (Performing Arts) Department Portrait", status: "partial",
@@ -1005,7 +1011,7 @@ function RigorPanel({ placement, aiPlacement, reason, pending, error, onRate, on
 /* =====================================================================
    STANDARD CARD
    ===================================================================== */
-function StandardCard({ standard, showPath, portraits, canReview, onApprove, onReject }) {
+function StandardCard({ standard, showPath, portraits, canReview, onApprove, onReject, canSubmit, onSubmit }) {
   const [open, setOpen] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [comment, setComment] = useState("");
@@ -1039,6 +1045,12 @@ function StandardCard({ standard, showPath, portraits, canReview, onApprove, onR
                 <span>{standard.createdDate}</span>
                 <span>•</span>
                 <span>{standard.submitted ? "Submitted for approval" : "Private draft"}</span>
+                {!standard.submitted && canSubmit && onSubmit && (
+                  <button onClick={(e) => { e.stopPropagation(); onSubmit(standard.id); }}
+                    className="px-3 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-xs font-semibold not-italic">
+                    Submit for approval
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -1117,7 +1129,7 @@ function FilterPill({ active, onClick, children }) {
 }
 
 function BrowseView({
-  standards, onApprove, onReject, userRole, currentUser, chairDepartment,
+  standards, onApprove, onReject, onSubmit, userRole, currentUser, chairDepartment,
   school, setSchool, department, setDepartment, course, setCourse,
   searchTerm, setSearchTerm, statusFilter, setStatusFilter
 }) {
@@ -1225,7 +1237,8 @@ function BrowseView({
           {results.map(s => (
             <StandardCard key={s.school + s.course + s.id} standard={s} showPath={!!globalSearch}
               portraits={DEPARTMENT_PORTRAITS} canReview={isReviewer && canReviewDept(s.department)}
-              onApprove={onApprove} onReject={onReject} />
+              onApprove={onApprove} onReject={onReject}
+              canSubmit={s.createdBy === currentUser} onSubmit={onSubmit} />
           ))}
         </div>
       )}
@@ -2257,7 +2270,7 @@ function OutlineReport({ course, portrait, standards, unitList, onAddUnit, onAss
 
       {window.EasyButton && React.createElement(window.EasyButton, {
         course: course, portrait: portrait, existingCount: courseStandards.length, workerUrl: WORKER_URL,
-        onApply: (draftUnits) => onApplyDraft(course, draftUnits)
+        onApply: (draftUnits, attribution, opts) => onApplyDraft(course, draftUnits, !!(opts && opts.submit))
       })}
 
       <RigorKey defaultOpen={true} />
@@ -3400,7 +3413,7 @@ function App() {
   }));
   const unratedIds = standards.filter(s => !isRated(s.placement) && !rating[s.id]).map(s => s.id);
   // Easy button: adds the teacher-reviewed draft (units + standards) to a course outline.
-  const applyEasyDraft = (course, draftUnits) => {
+  const applyEasyDraft = (course, draftUnits, submit) => {
     const key = courseKey(course.school, course.department, course.name);
     setUnits(prev => {
       const current = prev[key] || [];
@@ -3416,7 +3429,7 @@ function App() {
       created.push({
         id: id, unit: u.name, school: course.school, department: course.department, course: course.name,
         category: st.category, description: st.description,
-        placement: UNRATED, status: "draft", submitted: false,
+        placement: UNRATED, status: "draft", submitted: !!submit,
         createdBy: DEMO_USER, createdDate: today,
         alignsTo: st.alignsTo || [], assessments: [], aiSuggested: !st.teacherWritten, sourceNote: st.sourceNote
       });
@@ -3425,6 +3438,8 @@ function App() {
     rateIds(created.map(c => c.id), created);     // every standard is rated, wherever it came from
   };
   const approve = (id) => setStandards(prev => prev.map(s => s.id === id ? { ...s, status: "approved" } : s));
+  // A private draft goes to the chair's "Pending My Approval" list.
+  const submitForApproval = (id) => setStandards(prev => prev.map(s => s.id === id ? { ...s, submitted: true } : s));
   const reject = (id, comment) => {
     console.log("Rejected", id, "with comment:", comment);
     setStandards(prev => prev.filter(s => s.id !== id));
@@ -3502,7 +3517,7 @@ function App() {
         )}
         <RigorContext.Provider value={{ rating, rateIds, setPlacement }}>
         {effectiveView === "browse" && (
-          <BrowseView standards={standards} onApprove={approve} onReject={reject}
+          <BrowseView standards={standards} onApprove={approve} onReject={reject} onSubmit={submitForApproval}
             userRole={userRole} currentUser={DEMO_USER} chairDepartment={chairDept}
             school={school} setSchool={setSchool} department={department} setDepartment={setDepartment}
             course={course} setCourse={setCourse} searchTerm={searchTerm} setSearchTerm={setSearchTerm}
