@@ -829,6 +829,15 @@ function MiniRigor({ placement }) {
   );
 }
 
+/* The "Rigor zone" label sits in every rating. Muted when the standard is not in the zone; lit up with a check mark when it is. */
+function ZoneLabel({ placement }) {
+  if (!isRated(placement)) return null;
+  if (inRigorZone(placement)) {
+    return <span className="inline-flex items-center gap-1 text-emerald-900 bg-emerald-200 border border-emerald-600 rounded px-1.5 py-0.5 font-bold shadow-sm">✓ Rigor zone</span>;
+  }
+  return <span className="inline-flex items-center gap-1 text-gray-400 bg-white/60 border border-gray-300 rounded px-1.5 py-0.5 font-medium">Rigor zone</span>;
+}
+
 /* The one-glance rigor tag shown on every standard: mini map + level + (when it applies) the Rigor zone mark. */
 function RigorChip({ standard }) {
   const ctx = React.useContext(RigorContext);
@@ -838,11 +847,11 @@ function RigorChip({ standard }) {
     return <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold border border-gray-300 bg-gray-50 text-gray-600 animate-pulse">Rating rigor…</span>;
   }
   return (
-    <span title={isRated(p) ? "Rigor Scale: " + rigorText(p) + ". The dark square on the small map shows where this standard sits. Up is harder thinking; right is less help from the teacher." + (inRigorZone(p) ? " Rigor zone: Analysis or Knowledge Utilization with Medium High or High autonomy." : "") : "This standard has not been placed on the Rigor Scale yet."}
+    <span title={isRated(p) ? "Rigor Levels: " + rigorText(p) + ". The dark square on the small map shows where this standard sits. Up is harder thinking; right is less help from the teacher." + (inRigorZone(p) ? " Rigor zone: Analysis or Knowledge Utilization with Medium High or High autonomy." : "") : "This standard has not been placed on the Rigor Scale yet."}
       className={"inline-flex items-center gap-2 pl-2 pr-3 py-1 rounded-full text-xs font-semibold border " + rigorBadgeClass(p)}>
       <MiniRigor placement={p} />
-      {isRated(p) ? <span>Rigor: {rigorText(p)}</span> : <span>Rigor: not yet rated</span>}
-      {inRigorZone(p) && <span className="text-emerald-800 bg-emerald-100 border border-emerald-300 rounded px-1.5 py-0.5">Rigor zone</span>}
+      {isRated(p) ? <span>Rigor Levels: {rigorText(p)}</span> : <span>Rigor Levels: not yet rated</span>}
+      <ZoneLabel placement={p} />
     </span>
   );
 }
@@ -914,10 +923,10 @@ function RigorKey({ defaultOpen }) {
           <h4 className="font-semibold text-sm text-gray-800 mb-1">Reading a tag</h4>
           <div className="text-sm text-gray-700">
             <span className="inline-flex items-center gap-2 pl-2 pr-3 py-1 rounded-full text-xs font-semibold border rigor-3 mb-2">
-              <MiniRigor placement={example} /> Rigor: Analysis · Medium High autonomy
-              <span className="text-emerald-800 bg-emerald-100 border border-emerald-300 rounded px-1.5 py-0.5">Rigor zone</span>
+              <MiniRigor placement={example} /> Rigor Levels: Analysis · Medium High autonomy
+              <ZoneLabel placement={example} />
             </span>
-            <p>means students <span className="font-semibold">apply what they learned to new situations</span> (Analysis) with <span className="font-semibold">only minimal guidance</span> (Medium High), which puts the standard in the Rigor zone. A rating is a suggestion from the AI. Open any standard to move it to the box you think is right.</p>
+            <p>means students <span className="font-semibold">apply what they learned to new situations</span> (Analysis) with <span className="font-semibold">only minimal guidance</span> (Medium High), which puts the standard in the Rigor zone, so the label lights up with a check mark. On standards that are not in the Rigor zone, the label stays gray and muted. A rating is a suggestion from the AI. Open any standard to move it to the box you think is right.</p>
           </div>
         </div>
       </div>
@@ -937,8 +946,8 @@ function RigorPanel({ placement, aiPlacement, reason, pending, error, onRate, on
         </h3>
         {rated && (
           <span className={"inline-flex items-center gap-2 pl-2 pr-3 py-1 rounded-full text-xs font-semibold border " + rigorBadgeClass(placement)}>
-            <MiniRigor placement={placement} />{rigorText(placement)}
-            {inRigorZone(placement) && <span className="text-emerald-800 bg-emerald-100 border border-emerald-300 rounded px-1.5 py-0.5">Rigor zone</span>}
+            <MiniRigor placement={placement} />Rigor Levels: {rigorText(placement)}
+            <ZoneLabel placement={placement} />
           </span>
         )}
       </div>
