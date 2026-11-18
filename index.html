@@ -838,11 +838,82 @@ function RigorChip({ standard }) {
     return <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold border border-gray-300 bg-gray-50 text-gray-600 animate-pulse">Rating rigor…</span>;
   }
   return (
-    <span className={"inline-flex items-center gap-2 pl-2 pr-3 py-1 rounded-full text-xs font-semibold border " + rigorBadgeClass(p)}>
+    <span title={isRated(p) ? "Rigor Scale: " + rigorText(p) + ". The dark square on the small map shows where this standard sits. Up is harder thinking; right is less help from the teacher." + (inRigorZone(p) ? " Rigor zone: Analysis or Knowledge Utilization with Medium High or High autonomy." : "") : "This standard has not been placed on the Rigor Scale yet."}
+      className={"inline-flex items-center gap-2 pl-2 pr-3 py-1 rounded-full text-xs font-semibold border " + rigorBadgeClass(p)}>
       <MiniRigor placement={p} />
       {isRated(p) ? <span>Rigor: {rigorText(p)}</span> : <span>Rigor: not yet rated</span>}
       {inRigorZone(p) && <span className="text-emerald-800 bg-emerald-100 border border-emerald-300 rounded px-1.5 py-0.5">Rigor zone</span>}
     </span>
+  );
+}
+
+/* The key to the rigor tags: an annotated 4 x 4 map, what each level means, and how to read a tag. */
+const AUTONOMY_DEFS = [
+  [0, "Low", "The teacher guides most or every step."],
+  [1, "Medium", "Students get some guidance."],
+  [2, "Medium High", "Students need only minimal guidance."],
+  [3, "High", "Students work on their own and make their own decisions."]
+];
+function RigorKey({ defaultOpen }) {
+  const example = { complexity: 2, autonomy: 2, rated: true, by: "ai" };
+  const cell = 30;
+  return (
+    <details open={!!defaultOpen} className="no-print mb-4 bg-white border border-indigo-200 rounded-lg">
+      <summary className="cursor-pointer px-4 py-3 font-semibold text-indigo-900">How to read the rigor tags</summary>
+      <div className="px-4 pb-5 grid gap-6" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}>
+        <div>
+          <p className="text-sm text-gray-700 mb-3">
+            Every standard has a small map like this. The <span className="font-semibold">dark square</span> shows where that standard sits.
+            Going <span className="font-semibold">up</span> means harder thinking. Going <span className="font-semibold">right</span> means
+            students need less help from the teacher.
+          </p>
+          <div className="inline-block">
+            <div className="flex">
+              <div className="flex flex-col justify-around text-right pr-2" style={{ height: cell * 4 + 6, width: 150 }}>
+                {RIGOR_DEFS.map(d => <span key={d[1]} className="text-xs text-gray-700 leading-tight" style={{ height: cell }}>{d[1]}</span>)}
+              </div>
+              <div>
+                <div className="grid" style={{ gridTemplateColumns: "repeat(4, " + cell + "px)", gap: 2 }}>
+                  {[3, 2, 1, 0].map(c => [0, 1, 2, 3].map(a => {
+                    const here = c === example.complexity && a === example.autonomy;
+                    const zone = c >= 2 && a >= 2;
+                    return <div key={c + "-" + a} style={{ width: cell, height: cell, borderRadius: 4, background: here ? "#4338ca" : (zone ? "#a7f3d0" : "#e5e7eb") }}></div>;
+                  }))}
+                </div>
+                <div className="grid mt-1" style={{ gridTemplateColumns: "repeat(4, " + cell + "px)", gap: 2 }}>
+                  {AUTONOMY_LABELS.map(l => <span key={l} className="text-[10px] text-gray-700 text-center leading-tight">{l}</span>)}
+                </div>
+                <div className="text-xs font-semibold text-gray-700 text-center mt-1">Autonomy (how little help)</div>
+              </div>
+            </div>
+            <div className="text-xs font-semibold text-gray-700 mt-1">↑ Complexity (how hard the thinking is)</div>
+          </div>
+          <ul className="text-sm text-gray-700 mt-3 space-y-1">
+            <li><span className="inline-block align-middle mr-2" style={{ width: 14, height: 14, borderRadius: 3, background: "#4338ca" }}></span>This standard (example: Analysis, Medium High)</li>
+            <li><span className="inline-block align-middle mr-2" style={{ width: 14, height: 14, borderRadius: 3, background: "#a7f3d0" }}></span><span className="font-semibold">Rigor zone:</span> Analysis or Knowledge Utilization, with Medium High or High autonomy. Rigor occurs when students can do high order tasks with little to no outside assistance.</li>
+            <li><span className="inline-block align-middle mr-2" style={{ width: 14, height: 14, borderRadius: 3, background: "#e5e7eb" }}></span>Everything else: still important learning, but not yet in the Rigor zone.</li>
+          </ul>
+        </div>
+        <div>
+          <h4 className="font-semibold text-sm text-gray-800 mb-1">Complexity: how hard the thinking is</h4>
+          <ul className="text-sm text-gray-700 space-y-1 mb-3">
+            {RIGOR_DEFS.map(d => <li key={d[1]}><span className="font-semibold">{d[1]}.</span> {d[2]}</li>)}
+          </ul>
+          <h4 className="font-semibold text-sm text-gray-800 mb-1">Autonomy: how much help students need</h4>
+          <ul className="text-sm text-gray-700 space-y-1 mb-3">
+            {AUTONOMY_DEFS.map(d => <li key={d[1]}><span className="font-semibold">{d[1]}.</span> {d[2]}</li>)}
+          </ul>
+          <h4 className="font-semibold text-sm text-gray-800 mb-1">Reading a tag</h4>
+          <div className="text-sm text-gray-700">
+            <span className="inline-flex items-center gap-2 pl-2 pr-3 py-1 rounded-full text-xs font-semibold border rigor-3 mb-2">
+              <MiniRigor placement={example} /> Rigor: Analysis · Medium High autonomy
+              <span className="text-emerald-800 bg-emerald-100 border border-emerald-300 rounded px-1.5 py-0.5">Rigor zone</span>
+            </span>
+            <p>means students <span className="font-semibold">apply what they learned to new situations</span> (Analysis) with <span className="font-semibold">only minimal guidance</span> (Medium High), which puts the standard in the Rigor zone. A rating is a suggestion from the AI. Open any standard to move it to the box you think is right.</p>
+          </div>
+        </div>
+      </div>
+    </details>
   );
 }
 
@@ -890,13 +961,7 @@ function RigorPanel({ placement, aiPlacement, reason, pending, error, onRate, on
           {onPick && <p className="text-xs text-gray-600 mb-3">You know your students best. Click any box to place this standard there yourself.</p>}
         </>
       )}
-      <details className="text-sm text-gray-700">
-        <summary className="cursor-pointer font-medium text-indigo-800">What do the levels mean?</summary>
-        <ul className="mt-2 space-y-1">
-          {RIGOR_DEFS.map(d => <li key={d[1]}><span className="font-semibold">{d[1]}.</span> {d[2]}</li>)}
-          <li><span className="font-semibold">Autonomy.</span> How much outside help students need: Low, Medium, Medium High, High.</li>
-        </ul>
-      </details>
+      <div className="mt-3"><RigorKey /></div>
       {assessments && assessments.length > 0 && (
         <div className="mt-4">
           <h4 className="font-semibold text-sm text-gray-700 mb-2">Suggested assessments (optional):</h4>
@@ -1128,6 +1193,7 @@ function BrowseView({
         </div>
       )}
 
+      {results.length > 0 && <RigorKey defaultOpen={true} />}
       {results.length > 0 && (
         <div className="space-y-3">
           {results.map(s => (
@@ -2168,6 +2234,7 @@ function OutlineReport({ course, portrait, standards, unitList, onAddUnit, onAss
         onApply: (draftUnits) => onApplyDraft(course, draftUnits)
       })}
 
+      <RigorKey defaultOpen={true} />
       <UnitsSection courseStandards={courseStandards} unitList={unitList} onAddUnit={onAddUnit} onAssignUnit={onAssignUnit} onRenameUnit={onRenameUnit} />
 
       <div className="print-break space-y-8">
