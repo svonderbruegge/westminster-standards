@@ -273,11 +273,102 @@
     return top.concat(spread).sort(function (a, b) { return a.i - b.i; }).map(function (x) { return x.r; });
   }
 
-  // Which checks will really run, given what is available for the course.
-  function checksToRun(info, v) {
+  // Which checks will really run, given what is available for the course and how much of a pasted
+  // framework has been read so far.
+  function checksToRun(info, v, refCount) {
     var compare = !!(info.available && ((info.hasMO && v.mo) || (info.hasNational && v.national)));
+    var framework = !!v.framework && (refCount || 0) > 0;
     var internal = !!v.internal;
-    return { compare: compare, internal: internal, suggest: !!v.suggest && (compare || internal), any: compare || internal };
+    var any = compare || framework || internal;
+    return { compare: compare, framework: framework, internal: internal, suggest: !!v.suggest && any, any: any };
+  }
+
+  /* ---------------------------------------------------------------
+     A framework the teacher pastes (AP, PLTW...), read one part at a time
+     --------------------------------------------------------------- */
+  var REF_BATCH = 150;        // framework items per comparison request; a longer framework is checked in batches
+  var MAX_REF_TOTAL = 900;
+
+  function refKey(t) { return String(t || "").toLowerCase().replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim(); }
+
+  // Adds the items Claude found in one part to the running list. Repeats (the same item pasted twice, or
+  // a part that overlaps the last one) are kept once. Items with no code of their own get one from the part
+  // number ("P2-5"), and a code already used gets a suffix, so every code is unique.
+  function mergeRefItems(list, found, partNo) {
+    var out = list.slice(), seenText = {}, seenCode = {}, added = 0, n = 0;
+    out.forEach(function (it) { seenText[refKey(it.text)] = true; seenCode[it.code] = true; });
+    (found || []).forEach(function (it) {
+      if (!it || !it.text || out.length >= MAX_REF_TOTAL) return;
+      var k = refKey(it.text);
+      if (seenText[k]) return;
+      seenText[k] = true;
+      n += 1;
+      var code = String(it.code || "").trim() || ("P" + partNo + "-" + n);
+      var base = code, i = 2;
+      while (seenCode[code]) { code = base + " (" + i + ")"; i += 1; }
+      seenCode[code] = true;
+      out.push({ code: code, text: it.text, part: partNo });
+      added += 1;
+    });
+    return { items: out, added: added };
+  }
+
+  function batches(list, size) {
+    var out = [];
+    for (var i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
+    return out;
+  }
+
+  // One check may take several requests (the bank comparison, then the framework in batches). This puts
+  // their answers together: matches per standard, every gap, the findings (asked for once), and suggestions.
+  function mergeResults(results) {
+    var out = { matches: {}, gaps: [], findings: [], suggestions: [], checked: { compare: false, internal: false, suggest: false } };
+    var seenGap = {}, seenSg = {};
+    results.forEach(function (r) {
+      if (!r) return;
+      Object.keys(r.matches || {}).forEach(function (id) {
+        var have = out.matches[id] || [];
+        (r.matches[id] || []).forEach(function (c) { if (have.indexOf(c) === -1 && have.length < 6) have.push(c); });
+        out.matches[id] = have;
+      });
+      (r.gaps || []).forEach(function (g) { if (!seenGap[g.code]) { seenGap[g.code] = true; out.gaps.push(g); } });
+      if (r.findings && r.findings.length && out.findings.length === 0) out.findings = r.findings;
+      (r.suggestions || []).forEach(function (s) {
+        var k = refKey(s.description);
+        if (!seenSg[k] && out.suggestions.length < 15) { seenSg[k] = true; out.suggestions.push(s); }
+      });
+      var c = r.checked || {};
+      out.checked.compare = out.checked.compare || !!c.compare;
+      out.checked.internal = out.checked.internal || !!c.internal;
+      out.checked.suggest = out.checked.suggest || !!c.suggest;
+    });
+    return out;
+  }
+
+  // Adds a later part of the teacher's own document to the draft: standards join the unit of the same name,
+  // and new units are added at the end. A standard already in the draft (same wording) is not added twice.
+  function mergeDraft(draft, more) {
+    var units = draft.units.map(function (u) { return Object.assign({}, u, { standards: u.standards.slice() }); });
+    var have = {}, added = 0;
+    units.forEach(function (u) { u.standards.forEach(function (s) { have[refKey(s.original || s.description)] = true; }); });
+    more.units.forEach(function (mu) {
+      var fresh = mu.standards.filter(function (s) { var k = refKey(s.original || s.description); if (have[k]) return false; have[k] = true; return true; });
+      if (fresh.length === 0) return;
+      added += fresh.length;
+      var name = refKey(mu.name);
+      var target = units.filter(function (u) { return refKey(u.name) === name; })[0];
+      if (target) target.standards = target.standards.concat(fresh);
+      else units.push(Object.assign({}, mu, { standards: fresh }));
+    });
+    var a = draft.report || {}, b = more.report || {};
+    return {
+      added: added,
+      draft: Object.assign({}, draft, {
+        units: units,
+        report: { imported: true, skipped: (a.skipped || []).concat(b.skipped || []), dropped: (a.dropped || 0) + (b.dropped || 0),
+                  adjusted: (a.adjusted || 0) + (b.adjusted || 0), unadjusted: (a.unadjusted || 0) + (b.unadjusted || 0) }
+      })
+    };
   }
 
   // The teacher's standards as sent to the Worker: only checked ones with wording.
@@ -532,11 +623,48 @@
       h("span", null, h("span", { className: "font-semibold" }, props.title), h("span", { className: "block text-xs text-gray-600" }, props.help)));
   }
 
+  // The framework a teacher pastes, one part at a time. Claude reads each part and the list grows.
+  function ReferencePanel(props) {
+    var items = props.items, parts = props.parts, len = props.text.trim().length, busy = props.phase === "loading";
+    var off = props.disabled || busy;
+    var nextPart = parts + 1;
+    return h("div", { className: "ml-6 border-l-2 border-purple-200 pl-3 space-y-2" },
+      h("div", null,
+        h("label", { htmlFor: "eb-ref-name", className: "block text-xs font-medium text-gray-700 mb-1" }, "What is it called?"),
+        h("input", { id: "eb-ref-name", type: "text", maxLength: 60, value: props.name, disabled: off,
+                     placeholder: "e.g., AP Psychology Course and Exam Description",
+                     className: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm",
+                     onChange: function (e) { props.onName(e.target.value); } })),
+      items.length > 0 && h("div", { role: "status", className: "p-2 bg-green-50 border border-green-300 rounded text-sm text-green-900" },
+        h("span", { className: "font-semibold" }, "Claude has found " + items.length + " item" + (items.length === 1 ? "" : "s") + " in " + parts + " part" + (parts === 1 ? "" : "s") + " so far. "),
+        "Paste the next part below, or if that's the whole framework, you're ready.",
+        props.lastNote && h("div", { className: "text-xs mt-1" }, props.lastNote),
+        h("details", { className: "mt-1" },
+          h("summary", { className: "cursor-pointer text-xs text-green-800" }, "See the list"),
+          h("ol", { className: "mt-1 space-y-1 text-xs text-gray-800 max-h-48 overflow-y-auto" }, items.map(function (it) {
+            return h("li", { key: it.code }, h("span", { className: "font-semibold" }, it.code + " "), it.text);
+          }))),
+        h("button", { type: "button", disabled: off, onClick: props.onClear, className: "mt-1 text-xs text-gray-600 hover:text-red-700 underline" }, "Clear the list and start over")),
+      h("label", { htmlFor: "eb-ref-text", className: "block text-xs font-medium text-gray-700" },
+        items.length ? "Paste part " + nextPart + " of the framework" : "Paste the framework, or its first part"),
+      h("textarea", { id: "eb-ref-text", rows: 6, value: props.text, disabled: off,
+                      placeholder: "Copy the standards or learning objectives from the framework and paste them here. If it's long, paste one unit at a time.",
+                      className: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm",
+                      onChange: function (e) { props.onText(e.target.value); } }),
+      h("div", { className: "flex justify-between gap-3 text-xs" },
+        h("span", { className: "text-gray-500" }, "About 8 pages at a time. Nothing you paste here is saved on the site; it's used only for this check."),
+        h("span", { className: len > MAX_PASTE ? "text-red-700 font-semibold" : "text-gray-500" }, len.toLocaleString("en-US") + " of " + MAX_PASTE.toLocaleString("en-US"))),
+      props.error && h("div", { role: "alert", className: "p-2 bg-red-50 border border-red-300 text-red-800 rounded text-sm" }, props.error),
+      h("button", { type: "button", disabled: off || len === 0, onClick: props.onRead,
+                    className: "px-4 py-2 bg-white border-2 border-purple-600 text-purple-800 rounded-lg hover:bg-purple-50 font-semibold text-sm disabled:border-gray-300 disabled:text-gray-400" },
+        busy ? "Reading part " + nextPart + "..." : items.length ? "Read part " + nextPart : "Read this part"));
+  }
+
   // The "Also check my standards" checkboxes, used on the paste screen and again in the review.
   function CheckOptions(props) {
     var info = props.info, v = props.value, off = props.disabled;
     var set = function (k) { return function (val) { var p = {}; p[k] = val; props.onChange(Object.assign({}, v, p)); }; };
-    var run = checksToRun(info, v);
+    var run = checksToRun(info, v, props.refCount);
     return h("fieldset", { className: "bg-white border border-purple-200 rounded-lg p-3 space-y-2" },
       h("legend", { className: "px-1 text-sm font-semibold text-gray-900" }, props.legend || "Also check my standards"),
       h("p", { className: "text-xs text-gray-600" }, props.drafted
@@ -549,12 +677,16 @@
         title: "Compare with national standards (" + info.nationalNames.join(", ") + ").",
         help: "The same comparison against the national standards." }),
       !info.available && h("p", { className: "text-xs text-gray-700 bg-gray-50 border border-gray-200 rounded p-2" }, info.why),
+      h(Tick, { checked: v.framework, disabled: off, onChange: set("framework"),
+        title: "Compare with a framework I paste.",
+        help: "For example an AP Course and Exam Description or a PLTW course framework. You paste it a part at a time; Claude lists its items and checks " + (props.drafted ? "the drafted standards" : "your standards") + " against all of them." }),
+      v.framework && props.refPanel,
       h(Tick, { checked: v.internal, disabled: off, onChange: set("internal"),
         title: props.drafted ? "Look for gaps within the drafted standards." : "Look for gaps within my own standards.",
         help: "Units with very few standards, standards that repeat each other, topics this course usually has that none of your units cover, and units where nothing asks students to apply, analyze or create." }),
-      h(Tick, { checked: v.suggest && (run.compare || run.internal), disabled: off || !(run.compare || run.internal), onChange: set("suggest"),
+      h(Tick, { checked: v.suggest && run.any, disabled: off || !run.any, onChange: set("suggest"),
         title: "Suggest standards to fill the gaps.",
-        help: run.compare || run.internal ? "Claude drafts a few new standards, labeled as its own. You choose which to add, and to which unit." : "Choose one of the checks above first." }),
+        help: run.any ? "Claude drafts a few new standards, labeled as its own. You choose which to add, and to which unit." : "Choose one of the checks above first." }),
       props.children);
   }
 
@@ -574,37 +706,64 @@
     var unitNames = props.draft.units.map(function (u) { return u.name || "Unnamed unit"; });
     var matchedCodes = {};
     Object.keys(r.matches || {}).forEach(function (id) { (r.matches[id] || []).forEach(function (code) { matchedCodes[code] = true; }); });
-    var coreMatched = Object.keys(matchedCodes).filter(function (code) { return c.lookup[code] && c.lookup[code].core; }).length;
     var withMatch = Object.keys(r.matches || {}).length;
+    // Coverage for each set compared. A set with course standards marked (core) counts only those.
+    var setHasCore = {}, sets = {}, setOrder = [];
+    Object.keys(c.lookup).forEach(function (code) { if (c.lookup[code].core) setHasCore[c.lookup[code].set] = true; });
+    Object.keys(c.lookup).forEach(function (code) {
+      var row = c.lookup[code];
+      if (setHasCore[row.set] && !row.core) return;
+      if (!sets[row.set]) { sets[row.set] = { total: 0, covered: 0, course: !!setHasCore[row.set] }; setOrder.push(row.set); }
+      sets[row.set].total += 1;
+      if (matchedCodes[code]) sets[row.set].covered += 1;
+    });
 
-    var gapGroups = {};
+    var gapGroups = {}, gapCount = 0, why = {};
+    (r.gaps || []).forEach(function (g) { why[g.code] = g.why; });
     (r.gaps || []).forEach(function (g) {
       var src = c.lookup[g.code];
-      if (!src) return;
+      if (!src || src.ref) return;
       (gapGroups[src.set] = gapGroups[src.set] || []).push({ code: g.code, text: src.text, why: g.why });
+      gapCount += 1;
     });
+    // A framework the teacher pasted: every item counts, so every item nothing matched is listed, in its order.
+    Object.keys(c.lookup).forEach(function (code) {
+      var src = c.lookup[code];
+      if (!src.ref || matchedCodes[code]) return;
+      (gapGroups[src.set] = gapGroups[src.set] || []).push({ code: code, text: src.text, why: why[code] });
+      gapCount += 1;
+    });
+    var GAP_SHOWN = 25;
+    var gapItem = function (g) {
+      return h("li", { key: g.code, className: "text-sm bg-white border border-yellow-300 rounded p-2" },
+        h("span", { className: "font-semibold text-gray-900" }, g.code + " "), h("span", { className: "text-gray-800" }, g.text),
+        g.why && h("div", { className: "text-xs text-gray-600 mt-1" }, "Why it matters: " + g.why));
+    };
 
     var heading = function (t) { return h("h4", { className: "font-semibold text-gray-900" }, t); };
     return h("div", { className: "space-y-4" },
+      c.partial && h("div", { role: "alert", className: "p-3 bg-yellow-50 border border-yellow-300 text-yellow-900 rounded text-sm" }, c.partial),
       ran.compare && h("div", { className: "space-y-2" },
-        heading("Compared with published standards"),
+        heading("Compared with other standards"),
         h("p", { className: "text-sm text-gray-700" },
-          c.coreCount > 0
-            ? "Claude compared " + (props.drafted ? "the " + c.checkedCount + " drafted" : "your " + c.checkedCount) + " standards with " + c.coreCount + " published standards for " + props.courseName + ". By Claude's reading, " + yours + " cover " + coreMatched + " of them. "
-            : "Claude compared " + (props.drafted ? "the " + c.checkedCount + " drafted" : "your " + c.checkedCount) + " standards with " + c.sentCount + " published standards for this grade level. ",
-          withMatch + " of " + your + " standards " + (withMatch === 1 ? "matches" : "match") + " at least one. Each match is shown under the standard as “Covers.”"),
+          "Claude compared " + (props.drafted ? "the " + c.checkedCount + " drafted" : "your " + c.checkedCount) + " standards with these. " +
+          withMatch + " of " + your + " standards " + (withMatch === 1 ? "matches" : "match") + " at least one item; each match is shown under the standard as “Covers.”"),
+        h("ul", { className: "text-sm text-gray-800 space-y-1 pl-5 list-disc" }, setOrder.map(function (name) {
+          var g = sets[name];
+          return h("li", { key: name }, h("span", { className: "font-semibold" }, name + ": "),
+            "by Claude's reading, " + yours + " cover " + g.covered + " of " + g.total + (g.course ? " for " + props.courseName + "." : " (every one for this grade level, not only this course's)."));
+        })),
         Object.keys(gapGroups).length === 0
-          ? h("p", { className: "text-sm text-gray-700" }, "Claude didn't find any important published standards that " + yours + " leave out.")
+          ? h("p", { className: "text-sm text-gray-700" }, "Claude didn't find any important items that " + yours + " leave out.")
           : h("div", { className: "space-y-3" },
-              h("p", { className: "text-sm font-semibold text-gray-800" }, "Published standards none of " + yours + " cover (" + (r.gaps || []).length + ")"),
+              h("p", { className: "text-sm font-semibold text-gray-800" }, "Items none of " + yours + " cover (" + gapCount + ")"),
               Object.keys(gapGroups).map(function (set) {
                 return h("div", { key: set, className: "space-y-1" },
                   h("div", { className: "text-xs font-semibold text-gray-600 uppercase tracking-wide" }, set),
-                  h("ul", { className: "space-y-2" }, gapGroups[set].map(function (g) {
-                    return h("li", { key: g.code, className: "text-sm bg-white border border-yellow-300 rounded p-2" },
-                      h("span", { className: "font-semibold text-gray-900" }, g.code + " "), h("span", { className: "text-gray-800" }, g.text),
-                      g.why && h("div", { className: "text-xs text-gray-600 mt-1" }, "Why it matters: " + g.why));
-                  })));
+                  h("ul", { className: "space-y-2" }, gapGroups[set].slice(0, GAP_SHOWN).map(gapItem)),
+                  gapGroups[set].length > GAP_SHOWN && h("details", null,
+                    h("summary", { className: "cursor-pointer text-sm text-purple-800 font-semibold" }, "Show the other " + (gapGroups[set].length - GAP_SHOWN)),
+                    h("ul", { className: "space-y-2 mt-2" }, gapGroups[set].slice(GAP_SHOWN).map(gapItem))));
               }))),
       ran.internal && h("div", { className: "space-y-2" },
         heading(props.drafted ? "Inside the drafted standards" : "Inside your own standards"),
@@ -666,7 +825,22 @@
     var _will = useState(false), addWill = _will[0], setAddWill = _will[1];        // opt in: add "Students will" to pasted standards
     var _align = useState(false), suggestAlign = _align[0], setSuggestAlign = _align[1];   // opt in: suggest Portrait alignment
 
-    var _checks = useState({ mo: false, national: false, internal: false, suggest: false }), checks = _checks[0], setChecks = _checks[1];
+    var _checks = useState({ mo: false, national: false, framework: false, internal: false, suggest: false }), checks = _checks[0], setChecks = _checks[1];
+    var _progress = useState(""), checkProgress = _progress[0], setCheckProgress = _progress[1];
+    // a framework the teacher pastes, read one part at a time (kept only while the page is open)
+    var _refName = useState(""), refName = _refName[0], setRefName = _refName[1];
+    var _refText = useState(""), refText = _refText[0], setRefText = _refText[1];
+    var _refItems = useState([]), refItems = _refItems[0], setRefItems = _refItems[1];
+    var _refParts = useState(0), refParts = _refParts[0], setRefParts = _refParts[1];
+    var _refPhase = useState("idle"), refPhase = _refPhase[0], setRefPhase = _refPhase[1];
+    var _refErr = useState(""), refError = _refErr[0], setRefError = _refErr[1];
+    var _refNote = useState(""), refNote = _refNote[0], setRefNote = _refNote[1];
+    // more of the teacher's own document, added after the first part is sorted
+    var _more = useState(""), moreText = _more[0], setMoreText = _more[1];
+    var _morePhase = useState("idle"), morePhase = _morePhase[0], setMorePhase = _morePhase[1];
+    var _moreMsg = useState(""), moreMsg = _moreMsg[0], setMoreMsg = _moreMsg[1];
+    var _moreErr = useState(""), moreError = _moreErr[0], setMoreError = _moreErr[1];
+    var _docParts = useState(1), docParts = _docParts[0], setDocParts = _docParts[1];
     var _cphase = useState("idle"), checkPhase = _cphase[0], setCheckPhase = _cphase[1];
     var _cerr = useState(""), checkError = _cerr[0], setCheckError = _cerr[1];
     var _submit = useState(true), submitNow = _submit[0], setSubmitNow = _submit[1];   // send kept standards to the chair now
@@ -676,38 +850,116 @@
     var bankInfo = collectSources(department, course);
     var compareInfo = compareSets(course);
 
-    // Sends the sorted standards to the Worker for the checks the teacher chose.
+    var post = function (body) {
+      return fetch(props.workerUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+        .then(function (res) {
+          return res.json().then(function (data) {
+            if (!res.ok) { var err = new Error(data.error || "Request failed"); err.friendly = !!data.friendly; throw err; }
+            return data;
+          });
+        });
+    };
+
+    // Sends the standards to the Worker for the checks the teacher chose. The published standards go in one
+    // request; a pasted framework goes in batches of REF_BATCH items. The answers are put together into one report.
     var runCheck = function (d) {
-      var run = checksToRun(compareInfo, checks);
+      var run = checksToRun(compareInfo, checks, refItems.length);
+      if (checks.framework && refItems.length === 0 && !run.compare && !run.internal) { setCheckError("Read at least one part of the framework first, or untick that box."); return; }
       if (!run.any) { setCheckError("Choose at least one check."); return; }
       var mine = standardsForCheck(d);
       if (mine.standards.length === 0) { setCheckError("Check at least one standard first."); return; }
       var hint = mine.standards.map(function (s) { return s.text; }).join(" ") + " " + course.name;
-      var sources = run.compare ? pickCompareSources(compareInfo, checks.mo, checks.national, hint) : [];
+      var bankRows = run.compare ? pickCompareSources(compareInfo, checks.mo, checks.national, hint) : [];
+      var setName = refName.trim() || "Your pasted framework";
+      var refRows = run.framework ? refItems.map(function (it) { return { code: it.code, text: it.text, set: setName, core: true }; }) : [];
+      var refCodes = {};
+      refRows.forEach(function (r) { refCodes[r.code] = true; });
       var lookup = {};
-      sources.forEach(function (r) { lookup[r.code] = r; });
-      setCheckError(""); setCheckPhase("loading");
-      fetch(props.workerUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "compare_standards", department: department, course: course.name, gradeLabel: gradeLabelFor(course),
-                               units: mine.units, standards: mine.standards, sources: sources,
-                               checks: { compare: run.compare, internal: run.internal, suggest: run.suggest } })
-      }).then(function (res) {
-        return res.json().then(function (data) {
-          if (!res.ok) { var err = new Error(data.error || "Request failed"); err.friendly = !!data.friendly; throw err; }
-          return data;
-        });
-      }).then(function (data) {
-        setDraft(function (prev) { return prev && data.checked && data.checked.compare ? applyMatches(prev, data.matches || {}, lookup) : prev; });
-        setCheck({ result: data, lookup: lookup, sentCount: sources.length, checkedCount: mine.standards.length, added: {}, picks: {},
-                   coreCount: sources.filter(function (r) { return r.core; }).length });
-        setCheckPhase("done");
+      bankRows.concat(refRows).forEach(function (r) { lookup[r.code] = Object.assign({}, r, { ref: !!refCodes[r.code] && refRows.indexOf(r) !== -1 }); });
+
+      var jobs = [];
+      if (bankRows.length) jobs.push({ sources: bankRows, reference: false });
+      batches(refRows, REF_BATCH).forEach(function (b) { jobs.push({ sources: b, reference: true }); });
+      if (jobs.length === 0) jobs.push({ sources: [], reference: false });     // only the check inside the teacher's own standards
+
+      setCheckError(""); setCheckPhase("loading"); setCheckProgress(jobs.length > 1 ? "Step 1 of " + jobs.length : "");
+      var results = [], partial = "";
+      var step = function (i) {
+        if (i >= jobs.length) return Promise.resolve();
+        if (jobs.length > 1) setCheckProgress("Step " + (i + 1) + " of " + jobs.length);
+        var job = jobs[i];
+        return post({ mode: "compare_standards", department: department, course: course.name, gradeLabel: gradeLabelFor(course),
+                      units: mine.units, standards: mine.standards, sources: job.sources, reference: job.reference,
+                      checks: { compare: job.sources.length > 0, internal: run.internal && i === 0, suggest: run.suggest } })
+          .then(function (data) { results.push(data); return step(i + 1); })
+          .catch(function (e) {
+            if (results.length === 0) throw e;
+            partial = "Claude finished " + i + " of the " + jobs.length + " steps of this check; the last " + (jobs.length - i === 1 ? "one" : (jobs.length - i) + " steps") + " didn't work. The results below are incomplete. Run the checks again to finish.";
+          });
+      };
+      step(0).then(function () {
+        var merged = mergeResults(results);
+        merged.checked.internal = merged.checked.internal && run.internal;
+        setDraft(function (prev) { return prev && merged.checked.compare ? applyMatches(prev, merged.matches, lookup) : prev; });
+        setCheck({ result: merged, lookup: lookup, sentCount: bankRows.length + refRows.length, checkedCount: mine.standards.length,
+                   added: {}, picks: {}, partial: partial });
+        setCheckPhase("done"); setCheckProgress("");
       }).catch(function (e) {
-        setCheckError(e.friendly ? e.message : "The check didn't work: " + e.message + ". Your sorted standards are safe. Try the check again in a moment.");
-        setCheckPhase("idle");
+        setCheckError(e.friendly ? e.message : "The check didn't work: " + e.message + ". Your standards are safe. Try the check again in a moment.");
+        setCheckPhase("idle"); setCheckProgress("");
       });
     };
+
+    // Reads one part of a pasted framework and adds its items to the running list.
+    var readRefPart = function () {
+      var pv = validatePaste(refText);
+      if (!pv.ok) { setRefError(pv.msg.replace("your standards", "part of the framework").replace("standards themselves", "objectives themselves")); return; }
+      if (!props.workerUrl) { setRefError("The AI service isn't connected yet."); return; }
+      setRefError(""); setRefPhase("loading");
+      var partNo = refParts + 1;
+      post({ mode: "import_reference", course: course.name, name: refName.trim(), text: refText })
+        .then(function (data) {
+          var m = mergeRefItems(refItems, data.items, partNo);
+          setRefItems(m.items); setRefParts(partNo); setRefText("");
+          var notes = [];
+          notes.push("Part " + partNo + " added " + m.added + " item" + (m.added === 1 ? "" : "s") + ".");
+          var dup = (data.items || []).length - m.added;
+          if (dup > 0) notes.push(dup === 1 ? "1 was already on the list." : dup + " were already on the list.");
+          if (data.detailSkipped > 0) notes.push("Claude left out " + data.detailSkipped + " detailed statements that sit under the main items (such as AP \u201Cessential knowledge\u201D).");
+          if (data.dropped > 0) notes.push(data.dropped === 1 ? "1 item Claude returned didn't match your text word for word, so it was left out." : data.dropped + " items Claude returned didn't match your text word for word, so they were left out.");
+          setRefNote(notes.join(" "));
+          setRefPhase("idle");
+        })
+        .catch(function (e) {
+          setRefError(e.friendly ? e.message : "Claude couldn't read that part: " + e.message + ". Try again in a moment.");
+          setRefPhase("idle");
+        });
+    };
+    var clearRef = function () { setRefItems([]); setRefParts(0); setRefNote(""); setRefError(""); };
+
+    // Sorts the next part of the teacher's own document and merges it into the draft.
+    var addDocPart = function () {
+      var pv = validatePaste(moreText);
+      if (!pv.ok) { setMoreError(pv.msg); return; }
+      setMoreError(""); setMoreMsg(""); setMorePhase("loading");
+      post({ mode: "import_standards", department: department, course: course.name, gradeLabel: gradeLabelFor(course),
+             text: moreText, addStudentsWill: addWill, suggestAlignment: suggestAlign, portrait: suggestAlign ? portraitFor(props.portrait) : [] })
+        .then(function (data) {
+          var m = mergeDraft(draft, toDraft(data));
+          setDraft(m.draft); setMoreText(""); setDocParts(docParts + 1);
+          setMoreMsg("Part " + (docParts + 1) + " added " + m.added + " standard" + (m.added === 1 ? "" : "s") + ", into units with the same name where there was one." +
+                     (report ? " Run the checks again to include them." : ""));
+          setMorePhase("idle");
+        })
+        .catch(function (e) {
+          setMoreError(e.friendly ? e.message : "That part didn't sort: " + e.message + ". Try again in a moment.");
+          setMorePhase("idle");
+        });
+    };
+
+    var refPanel = h(ReferencePanel, { name: refName, onName: setRefName, text: refText, onText: setRefText, items: refItems, parts: refParts,
+                                       phase: refPhase, error: refError, lastNote: refNote, onRead: readRefPart, onClear: clearRef,
+                                       disabled: phase === "loading" || checkPhase === "loading" });
 
     var addSuggestion = function (i, unitIndex) {
       var sg = report.result.suggestions[i];
@@ -739,6 +991,10 @@
       setError(""); setDoneMsg("");
       if (!props.workerUrl) { setError("The AI service isn't connected yet. Set WORKER_URL at the top of the script."); return; }
 
+      if ((mode === "paste" || mode === "units") && checks.framework && refItems.length === 0) {
+        setError("You ticked \u201CCompare with a framework I paste\u201D but no part of it has been read yet. Paste it and click \u201CRead this part\u201D, or untick that box.");
+        return;
+      }
       var body, used;
       if (mode === "units") {
         if (!check.ok) { setShowErrors(true); setError("Each unit needs a name and a short description before Claude can write standards for it."); return; }
@@ -776,7 +1032,8 @@
         setInfo({ sampled: used.sampled, total: used.total, used: used.rows.length, ranked: used.ranked || 0 });
         setPhase("review");
         setCheck(null); setCheckError(""); setCheckPhase("idle");
-        if ((sentMode === "paste" || sentMode === "units") && checksToRun(compareInfo, checks).any) runCheck(fresh);   // the checks chosen beforehand
+        setMoreMsg(""); setMoreError(""); setDocParts(1);
+        if ((sentMode === "paste" || sentMode === "units") && checksToRun(compareInfo, checks, refItems.length).any) runCheck(fresh);   // the checks chosen beforehand
       }).catch(function (e) {
         // a problem the teacher can fix (too long, nothing found) is shown as it is; anything else is a generic retry
         setError(e.friendly ? e.message : "The draft didn't work: " + e.message + ". Try again in a moment.");
@@ -845,13 +1102,26 @@
           draft.report.skipped.length > 8 && h("div", { className: "text-xs" }, "and " + (draft.report.skipped.length - 8) + " more")),
         builtMode === "paste" && draft.report && draft.report.dropped > 0 && h("div", { role: "status", className: "p-3 bg-yellow-50 border border-yellow-300 text-yellow-900 rounded text-sm" },
           draft.report.dropped + " item" + (draft.report.dropped === 1 ? "" : "s") + " Claude returned didn't match your document word for word, so " + (draft.report.dropped === 1 ? "it was" : "they were") + " left out. If a standard of yours is missing, add it with Create Standard."),
+        builtMode === "paste" && h("div", { className: "border border-purple-200 bg-white rounded-lg p-4 space-y-2" },
+          h("h4", { className: "text-base font-bold text-gray-900" }, "Add another part of my document"),
+          h("p", { className: "text-xs text-gray-600" }, "Long document? Paste the next part here (about 8 pages at a time). Claude sorts it the same way and adds it: standards go into the unit with the same name, and new units are added at the end. " +
+            (docParts > 1 ? docParts + " parts added so far." : "")),
+          moreMsg && h("div", { role: "status", className: "p-2 bg-green-50 border border-green-300 rounded text-sm text-green-900" }, moreMsg),
+          moreError && h("div", { role: "alert", className: "p-2 bg-red-50 border border-red-300 text-red-800 rounded text-sm" }, moreError),
+          h("textarea", { id: "eb-more", "aria-label": "The next part of your document", rows: 5, value: moreText, disabled: morePhase === "loading" || checkPhase === "loading",
+                          placeholder: "Paste part " + (docParts + 1) + " of your standards here, with its unit headings.",
+                          className: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm",
+                          onChange: function (e) { setMoreText(e.target.value); } }),
+          h("button", { type: "button", onClick: addDocPart, disabled: morePhase === "loading" || checkPhase === "loading" || !moreText.trim(),
+                        className: "px-4 py-2 bg-white border-2 border-purple-600 text-purple-800 rounded-lg hover:bg-purple-50 font-semibold text-sm disabled:border-gray-300 disabled:text-gray-400" },
+            morePhase === "loading" ? "Sorting part " + (docParts + 1) + "..." : "Sort this part and add it")),
         (builtMode === "paste" || builtMode === "units") && h("div", { className: "border border-purple-300 bg-purple-100/40 rounded-lg p-4 space-y-4" },
           h("h4", { className: "text-base font-bold text-gray-900" }, "Check these standards"),
           checkPhase === "loading"
-            ? h("p", { role: "status", className: "text-sm text-gray-700" }, "Claude is checking the standards. This usually takes under a minute; a long list can take two.")
-            : h(CheckOptions, { info: compareInfo, value: checks, onChange: setChecks, drafted: builtMode === "units", legend: report ? "Run the checks again" : "Choose the checks" },
+            ? h("p", { role: "status", className: "text-sm text-gray-700" }, "Claude is checking the standards" + (checkProgress ? " (" + checkProgress + ")" : "") + ". Each step usually takes under a minute.")
+            : h(CheckOptions, { info: compareInfo, value: checks, onChange: setChecks, refCount: refItems.length, refPanel: refPanel, drafted: builtMode === "units", legend: report ? "Run the checks again" : "Choose the checks" },
                 h("div", { className: "pt-1" },
-                  h("button", { type: "button", onClick: function () { runCheck(draft); }, disabled: !checksToRun(compareInfo, checks).any,
+                  h("button", { type: "button", onClick: function () { runCheck(draft); }, disabled: !checksToRun(compareInfo, checks, refItems.length).any,
                                 className: "px-4 py-2 bg-purple-700 text-white rounded-lg hover:bg-purple-800 font-semibold text-sm disabled:bg-gray-300 disabled:cursor-not-allowed" },
                     report ? "Run the checks again" : "Run the checks"),
                   report && h("span", { className: "ml-2 text-xs text-gray-600" }, "Use this after you edit, move or uncheck standards."))),
@@ -929,19 +1199,19 @@
         onChange: function (e) { setPasteText(e.target.value); }
       }),
       h("div", { className: "flex justify-between gap-3 text-xs" },
-        h("span", { className: "text-gray-500" }, "Up to about 8 pages at a time. Longer than that? Paste half, then the other half."),
+        h("span", { className: "text-gray-500" }, "Up to about 8 pages at a time. Longer than that? Paste the first part now; after Claude sorts it, you can add the next part."),
         h("span", { className: plen > MAX_PASTE ? "text-red-700 font-semibold" : plen > MAX_PASTE * 0.9 ? "text-yellow-800" : "text-gray-500" },
           plen.toLocaleString("en-US") + " of " + MAX_PASTE.toLocaleString("en-US") + " characters" + (plen > 0 ? " (about " + pageEstimate(plen) + (pageEstimate(plen) === 1 ? " page)" : " pages)") : ""))),
       tickbox(addWill, setAddWill, loading, "Start my standards with \u201CStudents will\u201D where they don't already.",
         "Claude adds the opening words and changes the verb to fit. It doesn't change what your standard asks of students. You'll see your original wording under any change and can switch back."),
       tickbox(suggestAlign && !noPortrait, setSuggestAlign, loading || noPortrait, "Also suggest which Portrait statements each standard supports.",
         noPortrait ? "No portrait statements are written for this department yet." : "Claude's suggestions are labeled as its own, and you can ignore them."),
-      h(CheckOptions, { info: compareInfo, value: checks, onChange: setChecks, disabled: loading }),
+      h(CheckOptions, { info: compareInfo, value: checks, onChange: setChecks, refCount: refItems.length, refPanel: refPanel, disabled: loading }),
       h("div", { className: "flex gap-3 flex-wrap items-center" },
         h("button", {
           onClick: build, disabled: loading,
           className: "px-5 py-3 bg-purple-700 text-white rounded-lg hover:bg-purple-800 font-semibold disabled:bg-gray-400 disabled:cursor-wait"
-        }, loading ? "Sorting your standards..." : checksToRun(compareInfo, checks).any ? "Sort and check my standards" : "Sort my standards"))
+        }, loading ? "Sorting your standards..." : checksToRun(compareInfo, checks, refItems.length).any ? "Sort and check my standards" : "Sort my standards"))
     );
 
     var unitControls = h("div", { className: "space-y-3" },
@@ -982,12 +1252,12 @@
           type: "button", onClick: addRow, disabled: loading || rows.length >= MAX_UNITS,
           className: "px-3 py-2 border border-gray-300 bg-white rounded-lg hover:bg-gray-50 text-sm disabled:opacity-50"
         }, rows.length >= MAX_UNITS ? "Eight units is the most" : "+ Add another unit")),
-      h(CheckOptions, { info: compareInfo, value: checks, onChange: setChecks, disabled: loading, drafted: true }),
+      h(CheckOptions, { info: compareInfo, value: checks, onChange: setChecks, refCount: refItems.length, refPanel: refPanel, disabled: loading, drafted: true }),
       h("div", { className: "flex gap-3 flex-wrap items-center" },
         h("button", {
           onClick: build, disabled: loading,
           className: "px-5 py-3 bg-purple-700 text-white rounded-lg hover:bg-purple-800 font-semibold disabled:bg-gray-400 disabled:cursor-wait"
-        }, loading ? "Building your draft..." : checksToRun(compareInfo, checks).any ? "Build and check standards for my units" : "Build standards for my units"))
+        }, loading ? "Building your draft..." : checksToRun(compareInfo, checks, refItems.length).any ? "Build and check standards for my units" : "Build standards for my units"))
     );
 
     return h("section", { className: "no-print border border-purple-200 bg-purple-50 rounded-lg p-5 space-y-4" },
@@ -1018,6 +1288,7 @@
     collectSources: collectSources, hintWords: hintWords, validateUnitRows: validateUnitRows, validatePaste: validatePaste, pageEstimate: pageEstimate, portraitFor: portraitFor, toDraft: toDraft, selectedUnits: selectedUnits,
     countSelected: countSelected, StandardRow: StandardRow, moveStandard: moveStandard, updateStandard: updateStandard, renameUnit: renameUnit,
     compareProfile: compareProfile, compareSets: compareSets, pickCompareSources: pickCompareSources, checksToRun: checksToRun,
-    standardsForCheck: standardsForCheck, applyMatches: applyMatches, suggestionNote: suggestionNote, addToUnit: addToUnit
+    standardsForCheck: standardsForCheck, applyMatches: applyMatches, suggestionNote: suggestionNote, addToUnit: addToUnit,
+    mergeRefItems: mergeRefItems, mergeResults: mergeResults, mergeDraft: mergeDraft, batches: batches
   };
 })();
