@@ -17,6 +17,7 @@
 <script src="standards-bank-science.js"></script>
 <script src="standards-bank-history-add.js"></script>
 <script src="standards-bank-science-add.js"></script>
+<script src="standards-bank-borrowed.js"></script>
 <script src="standards-credits.js"></script>
 <script src="chair-worksheet.js"></script>
 <script src="family-sheet.js"></script>
@@ -1273,7 +1274,9 @@ function BankModal({ school, department, course, standards, onPick, onClose }) {
   // Each department's snapshot is its own file: standards-bank.js (Mathematics), standards-bank-english.js,
   // standards-bank-history.js, standards-bank-science.js. A bank can set gradeFilter: true to show only the
   // chosen school's grades (rows with grades "7", "8", "6-8" are Middle School; the rest are Upper School).
-  const allBanks = [window.STANDARDS_BANK, window.STANDARDS_BANK_ENGLISH, window.STANDARDS_BANK_HISTORY, window.STANDARDS_BANK_SCIENCE].filter(Boolean);
+  // STEM and Business & Communications borrow rows from the others (standards-bank-borrowed.js).
+  const allBanks = [window.STANDARDS_BANK, window.STANDARDS_BANK_ENGLISH, window.STANDARDS_BANK_HISTORY, window.STANDARDS_BANK_SCIENCE,
+                    window.STANDARDS_BANK_STEM, window.STANDARDS_BANK_BUSINESS].filter(Boolean);
   const bank = allBanks.find(b => b.department === department) || null;
   const [tab, setTab] = useState("honors");
   const [query, setQuery] = useState("");

@@ -24,7 +24,8 @@
   var useState = React.useState;
 
   // One bank file per department; each sets a window variable with a matching "department".
-  var BANK_VARS = ["STANDARDS_BANK", "STANDARDS_BANK_ENGLISH", "STANDARDS_BANK_HISTORY", "STANDARDS_BANK_SCIENCE"];
+  var BANK_VARS = ["STANDARDS_BANK", "STANDARDS_BANK_ENGLISH", "STANDARDS_BANK_HISTORY", "STANDARDS_BANK_SCIENCE",
+                   "STANDARDS_BANK_STEM", "STANDARDS_BANK_BUSINESS"];   // the last two borrow rows (standards-bank-borrowed.js)
   var MAX_SOURCES = 300;
   var MIN_UNITS = 3;
   var MAX_UNITS = 8;
@@ -186,7 +187,15 @@
     { dept: "Pathways", name: /study lab/i, none: "Study Labs have no published standards to compare with, so Claude can check only within your own standards." },
     { dept: "Pathways", name: /expository writing/i, bank: "English", pool: seg("W|L") },
     { dept: "Pathways", name: /literature|western civ/i, bank: "English", pool: seg("RL|RI|R|W") },
-    { dept: "Pathways", name: /./, bank: "English" }
+    { dept: "Pathways", name: /./, bank: "English" },
+    // STEM and Business & Communications use the borrowed banks; each course is pointed at the part that fits it.
+    { dept: "STEM", name: /healthcare/i, pool: /(^|[.\-])LS1(?=[.\-]|$)|^(RST|WHST)/ },
+    { dept: "STEM", name: /programming/i, pool: /ETS1|^(RST|WHST)/ },
+    { dept: "STEM", name: /CAD|design|robotics|engineering/i, pool: /ETS1|^(HSG-MG|HSG-GMD|HSN-Q|RST)/ },
+    { dept: "STEM", name: /./, pool: /ETS1|^(RST|WHST)/ },
+    { dept: "Business & Communications", name: /journalism|video|yearbook|news/i, pool: seg("W|SL|L") },
+    { dept: "Business & Communications", name: /finance|accounting/i, pool: /(^|[^A-Za-z0-9])D2\.Eco|^(HSF-LE|HSA-SSE)/ },
+    { dept: "Business & Communications", name: /./, pool: /(^|[^A-Za-z0-9])D2\.Eco/ }
   ];
   var MIN_POOL = 5;
 
