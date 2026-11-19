@@ -1157,13 +1157,14 @@
     }
 
     // ---- Idle / loading ----
-    var tab = function (key, heading, text) {
+    var tab = function (key, number, heading, text) {
       var on = mode === key;
       return h("button", {
         type: "button", "aria-pressed": on, disabled: loading,
         onClick: function () { setMode(key); setError(""); },
         className: "text-left px-4 py-3 rounded-lg border-2 flex-1 min-w-[14rem] " + (on ? "border-purple-500 bg-white" : "border-purple-200 bg-purple-50 hover:bg-white")
-      }, h("div", { className: "font-semibold text-gray-900" }, heading), h("div", { className: "text-xs text-gray-600 mt-0.5" }, text));
+      }, h("div", { className: "text-xs font-bold uppercase tracking-wide text-purple-700" }, "Option " + number),
+         h("div", { className: "font-semibold text-gray-900" }, heading), h("div", { className: "text-xs text-gray-600 mt-0.5" }, text));
     };
 
     var autoControls = h("div", { className: "flex items-end gap-4 flex-wrap" },
@@ -1264,9 +1265,9 @@
       h("div", null, title,
         h("p", { className: "text-sm text-gray-700 mt-1" }, "Choose how much help you want. Either way, you review everything, and only what you keep is added to the outline.")),
       h("div", { className: "flex gap-3 flex-wrap", role: "group", "aria-label": "How much help do you want?" },
-        tab("auto", "Plan it for me", "Claude proposes the units and writes the standards."),
-        tab("units", "I'll describe my units", "You list your units. Claude writes the standards."),
-        tab("paste", "I already have my standards", "Paste them in. Claude sorts them into units. Your wording stays yours.")),
+        tab("auto", 1, "Plan it for me", "Claude proposes the units and writes the standards."),
+        tab("units", 2, "I'll describe my units", "You list your units. Claude writes the standards."),
+        tab("paste", 3, "I already have my standards", "Paste them in. Claude sorts them into units. Your wording stays yours.")),
       h("p", { className: "text-xs text-gray-500" }, mode === "paste" ? "Your standards stay in your own words." : sourceLine),
       doneMsg && h("div", { role: "status", className: "p-3 bg-green-50 border border-green-300 text-green-800 rounded text-sm" }, doneMsg),
       error && h("div", { role: "alert", className: "p-3 bg-red-50 border border-red-300 text-red-800 rounded text-sm" }, error),
