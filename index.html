@@ -1893,7 +1893,7 @@ function UnitsSection({ courseStandards, unitList, onAddUnit, onAssignUnit, onRe
   return (
     <section>
       <SectionTitle title="Units and standards"
-        subtitle="Units are named by the teachers. Add a unit below, or choose “+ New unit…” from any standard's Unit menu. When a standard's wording matches a unit, it is suggested. To change a unit's name, use Rename beside it; its standards stay with it." />
+        subtitle={<><span className="no-print">Units are named by the teachers. Add a unit below, or choose “+ New unit…” from any standard's Unit menu. When a standard's wording matches a unit, it is suggested. To change a unit's name, use Rename beside it; its standards stay with it.</span><span className="print-only">The course's standards, grouped by unit, with each standard's rigor rating and the Department Portrait statements it supports.</span></>} />
       <div className="no-print flex gap-2 mb-4 flex-wrap">
         <input type="text" value={newUnit} onChange={e => setNewUnit(e.target.value)} aria-label="New unit name"
           onKeyDown={e => { if (e.key === "Enter") add(); }}
@@ -2232,6 +2232,30 @@ function LevelsSection({ course, standards }) {
   );
 }
 
+// A plain-text copy of the outline, laid out the way "I already have my standards" reads it: each unit name on
+// its own line, then its standards, one per line. Pasting it back into that option rebuilds the outline.
+function outlineAsText(course, courseStandards, unitList, today) {
+  const lines = [course.name + " (" + course.school + ", " + course.department + "). Saved from the WCA Standards pilot on " + today + ".", ""];
+  const known = new Set(unitList);
+  const block = (name, items) => {
+    if (items.length === 0) return;
+    lines.push(name);
+    items.forEach(s => lines.push(s.description));
+    lines.push("");
+  };
+  unitList.forEach(u => block(u, courseStandards.filter(s => s.unit === u)));
+  block(unitList.length ? "Not yet in a unit" : "Standards", courseStandards.filter(s => !known.has(s.unit)));
+  return lines.join("\n");
+}
+
+function downloadText(filename, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function OutlineReport({ course, portrait, standards, unitList, onAddUnit, onAssignUnit, onApplyDraft, onRenameUnit }) {
   const courseStandards = standards.filter(s => matchesCourse(s, course));
   const today = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
@@ -2247,15 +2271,22 @@ function OutlineReport({ course, portrait, standards, unitList, onAddUnit, onAss
             {gradeText(course)}
             {course.family && course.level ? ". Level: " + course.level : ""}
           </p>
-          <p className="print-only text-xs text-gray-500 mt-1">Printed {today}</p>
+          <p className="print-only text-xs text-gray-500 mt-1">Printed {today} from the WCA Standards pilot. The pilot doesn't keep work between visits, so this copy is the record of this outline.</p>
         </div>
-        <div className="no-print text-right">
-          <button onClick={() => window.print()}
-            className="px-5 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold">
-            Export to PDF
-          </button>
-          <p className="text-xs text-gray-500 mt-2 max-w-xs">
-            In the print window, set the destination to “Save as PDF”.
+        <div className="no-print max-w-sm space-y-2">
+          <div className="flex gap-2 flex-wrap justify-end">
+            <button onClick={() => window.print()}
+              className="px-5 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold">
+              Print or save as PDF
+            </button>
+            <button onClick={() => downloadText(course.name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-standards.txt", outlineAsText(course, courseStandards, unitList, today))}
+              disabled={courseStandards.length === 0}
+              className="px-4 py-3 border border-blue-600 text-blue-700 bg-white rounded-lg hover:bg-blue-50 font-semibold disabled:border-gray-300 disabled:text-gray-400 disabled:cursor-not-allowed">
+              Download as text
+            </button>
+          </div>
+          <p className="text-xs text-gray-600 text-right">
+            The pilot doesn't save your work, so keep a copy before you close this page. To make a PDF, choose “Save as PDF” as the destination in the print window. The text file can be pasted back in next time: Build a semester draft › I already have my standards.
           </p>
         </div>
       </div>
@@ -2568,7 +2599,7 @@ function PilotBar({ onGuide, onFeedback }) {
   return (
     <div className="no-print mb-3 flex items-center gap-3 flex-wrap rounded-lg border-2 border-amber-400 bg-amber-50 px-4 py-2 text-sm text-amber-950">
       <span className="font-bold tracking-wide bg-amber-400 text-amber-950 rounded px-2 py-0.5">PILOT</span>
-      <span><span className="font-semibold">{PILOT_DEPARTMENTS.join(", ")}</span> are trying this out. Nothing you enter is saved between visits yet, so keep notes of anything you want to keep.</span>
+      <span><span className="font-semibold">{PILOT_DEPARTMENTS.join(", ")}</span> are trying this out. Nothing you enter is saved between visits yet. To keep a course outline, print it or download it from its outline page before you leave.</span>
       <span className="ml-auto flex gap-2">
         <button type="button" onClick={onGuide} className="px-3 py-1 rounded-lg border border-amber-500 bg-white hover:bg-amber-100 font-medium">Pilot guide</button>
         <button type="button" onClick={onFeedback} className="px-3 py-1 rounded-lg bg-amber-600 text-white hover:bg-amber-700 font-medium">Give feedback</button>
