@@ -22,6 +22,7 @@
 <script src="chair-worksheet.js"></script>
 <script src="family-sheet.js"></script>
 <script src="easy-button.js"></script>
+<script src="syllabus.js"></script>
 <style>
   .print-only { display: none; }
   @media print {
@@ -472,7 +473,7 @@ const DEPARTMENT_PORTRAITS = {
       { code: "SCI-POG-1", description: "Enjoyers of creation because they know their place and status as image bearers." },
       { code: "SCI-POG-2", description: "Keepers of the earth because they know their place and status as image bearers." },
       { code: "SCI-POG-3", description: "Delighted Workers toward restoration because they know their place and status as image bearers." },
-      { code: "SCI-POG-4", description: "Sharers, of an ever-deepening conviction of the reality of God because they know their place and status as image bearers" },
+      { code: "SCI-POG-4", description: "Sharers of an ever-deepening conviction of the reality of God because they know their place and status as image bearers." },
       { code: "SCI-POG-5", description: "Embracers of the divine purpose of struggle because they know their place and status as image bearers." }
     ]
   },
@@ -2460,6 +2461,10 @@ function OutlineReport({ course, portrait, standards, unitList, onAddUnit, onAss
 
       <RigorKey defaultOpen={true} />
       <UnitsSection courseStandards={courseStandards} unitList={unitList} onAddUnit={onAddUnit} onAssignUnit={onAssignUnit} onRenameUnit={onRenameUnit} />
+
+      {window.SyllabusBuilder && React.createElement(window.SyllabusBuilder, {
+        course: course, gradeLabel: gradeText(course), portrait: portrait, standards: courseStandards, unitList: unitList, workerUrl: WORKER_URL
+      })}
 
       <div className="print-break space-y-8">
         <VerticalSection portrait={portrait} courseStandards={courseStandards} courseName={course.name} />
